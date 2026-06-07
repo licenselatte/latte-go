@@ -1,190 +1,252 @@
+// Package latte is the Go client SDK for LicenseLatte.
+//
+// Typical usage:
+//
+//	sdk, err := latte.New(&latte.Config{AppID: "pk_live_..."})
+//	if err != nil { /* bad config */ }
+//
+//	license, err := sdk.Activate(licenseKey)
+//	if err != nil { /* handle: ErrLicenseExpired, ErrSeatLimit, etc. */ }
+//
+//	// Periodically (e.g. on startup, every N minutes):
+//	license, err = sdk.Check()
 package latte
 
 import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+	"sync"
+	"time"
 
 	"github.com/denisbrodbeck/machineid"
+	"github.com/licenselatte/sdk-go/internal/core/domain"
 	"github.com/licenselatte/sdk-go/internal/core/ports"
 	"github.com/licenselatte/sdk-go/internal/infra/crypto"
-	"github.com/licenselatte/sdk-go/internal/infra/http"
+	latthttp "github.com/licenselatte/sdk-go/internal/infra/http"
 	"github.com/licenselatte/sdk-go/internal/infra/storage"
 )
 
-const appIDPrefix = "pk"
-
-type appIDType string
-
-const (
-	appIDTypeTest  appIDType = "test"
-	appIDTypeProd  appIDType = "live"
-	appIDTypeLocal appIDType = "local"
-)
-
 type Config struct {
+	// AppID is the project key shown in the LicenseLatte dashboard (pk_live_… / pk_test_… / pk_local_…).
 	AppID string
 }
 
-const publicURL = "https://api.licenselatte.com"
-const testURL = "https://test.api.licenselatte.com"
-const localURL = "http://localhost:8080"
-
-const publicKeyHex = "6dcefb3bc8ca08b7be423ea0c95f819e130d42fbd8b718c23f89d8f041eb54fc"
-
+// SDK is the main entry point. Create one instance per application.
 type SDK struct {
-	url        string
-	appID      string
-	appKeyType appIDType
-	appKey     string
-	activator  ports.Activator
-	validator  ports.Validator
-	store      ports.Storage
-	machineID  string
+	appID            string
+	appKey           string // 32-char portion after "pk_{env}_"
+	activator        ports.Activator
+	renewer          ports.Renewer
+	validator        ports.Validator
+	store            ports.Storage
+	machineID        string
+	renewMu          sync.Mutex
+	lastRenewAttempt time.Time
+	renewInFlight    bool
 }
 
-func (c *Config) validateAppID() (appIDType, string, error) {
-	var keyType, key string
-	parts := strings.Split(c.AppID, "_")
-	if len(parts) != 3 {
-		return "", "", fmt.Errorf("invalid AppID format")
-	}
-
-	if parts[0] != appIDPrefix {
-		return "", "", fmt.Errorf("invalid AppID prefix")
-	}
-
-	keyType = parts[1]
-	key = parts[2]
-
-	if len(key) != 32 {
-		return "", "", fmt.Errorf("invalid AppID format")
-	}
-
-	if !crypto.ValidateKey(key, 4) {
-		return "", "", fmt.Errorf("invalid AppID")
-	}
-
-	if keyType != string(appIDTypeTest) && keyType != string(appIDTypeProd) && keyType != string(appIDTypeLocal) {
-		return "", "", fmt.Errorf("invalid AppID type")
-	}
-
-	return appIDType(keyType), key, nil
-}
-
+// New creates a new SDK instance. Returns an error if AppID is invalid or
+// the local token-storage directory cannot be created.
 func New(config *Config) (*SDK, error) {
-	keyType, key, err := config.validateAppID()
+	env, appKey, err := parseAppID(config.AppID)
 	if err != nil {
 		return nil, err
 	}
 
-	var url string
-	switch keyType {
-	case appIDTypeTest:
-		url = testURL
-	case appIDTypeProd:
-		url = publicURL
-	case appIDTypeLocal:
-		url = localURL
-	default:
-		panic("invalid AppID type")
+	var apiURL string
+	switch env {
+	case envTest:
+		apiURL = testURL
+	case envLive:
+		apiURL = publicURL
+	case envLocal:
+		apiURL = localURL
 	}
 
-	activator := http.NewHttpClient(url, config.AppID)
+	client := latthttp.NewHttpClient(apiURL, config.AppID)
 
 	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
-	pubKey := ed25519.PublicKey(pubKeyBytes)
-	validator := crypto.NewEd25519Validator(pubKey, "licenselatte")
+	validator := crypto.NewEd25519Validator(ed25519.PublicKey(pubKeyBytes), "licenselatte")
 
-	dir, err := os.UserConfigDir()
-	valid := true
-	if err == nil {
-		dir = filepath.Join(dir, "LicenseLatte")
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			valid = false
-		}
-	}
-	if !valid {
-		dir = "./.licenselatte"
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, fmt.Errorf("could not create storage directory: %s", err.Error())
-		}
-	}
-
-	dir = filepath.Join(dir, fmt.Sprintf("%s.latte", key))
-
-	s := storage.NewFileStorage(dir)
-
-	machineID, err := machineid.ProtectedID("licenselatte_" + key)
+	storePath, err := resolveStoragePath(appKey)
 	if err != nil {
-		return nil, fmt.Errorf("could not get machine ID: %s", err.Error())
+		return nil, fmt.Errorf("%w: %w", ErrStorageInitFailed, err)
+	}
+
+	machineID, err := machineid.ProtectedID(fmt.Sprintf("licenselatte_" + config.AppID))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMachineIDFailed, err)
 	}
 
 	return &SDK{
-		url:        url,
-		appID:      config.AppID,
-		appKeyType: keyType,
-		appKey:     key,
-		activator:  activator,
-		validator:  validator,
-		store:      s,
-		machineID:  machineID,
+		appID:     config.AppID,
+		appKey:    appKey,
+		activator: client,
+		renewer:   client,
+		validator: validator,
+		store:     storage.NewFileStorage(storePath),
+		machineID: machineID,
 	}, nil
 }
 
-func (s *SDK) Activate(key string) (map[string]interface{}, error) {
+// Activate validates the license key and activates this machine.
+//
+// On the happy path it returns a *License immediately from the local token cache.
+// If no valid cached token exists, it calls the LicenseLatte API to activate.
+// A background goroutine silently renews the token whenever a valid cache hit occurs,
+// so the local copy stays fresh.
+func (s *SDK) Activate(key string) (*License, error) {
 	return s.ActivateWithContext(context.Background(), key)
 }
 
-func (s *SDK) ActivateWithContext(ctx context.Context, key string) (map[string]interface{}, error) {
+// ActivateWithContext is the context-aware version of Activate.
+func (s *SDK) ActivateWithContext(ctx context.Context, key string) (*License, error) {
 	key = crypto.SanitizeKey(key)
-	if key[:6] != s.appKey[:6] {
-		return map[string]interface{}{}, fmt.Errorf("invalid AppID")
+	if err := s.validateLicenseKey(key); err != nil {
+		return nil, err
 	}
 
-	data := key[6:]
-	if !crypto.ValidateKey(data, 2) {
-		return map[string]interface{}{}, fmt.Errorf("invalid AppID")
-	}
+	// Fast path: valid cached token.
+	if raw, err := s.store.LoadToken(); err == nil {
+		if lic, err := s.validator.Validate(raw, s.machineID); err == nil {
+			if s.shouldTryRenew(lic) {
+				// Renew in the background so it's fresh next time.
+				go s.silentRenew(lic)
+			}
 
-	token, err := s.store.LoadToken()
-	if err == nil {
-		claims, err := s.validator.Validate(token, s.machineID)
-		if err == nil {
-			go s.silentCheck(key)
-			return claims, nil
+			if lic.Key == key && lic.IsValid() {
+				return domainToPublic(lic), nil
+			}
 		}
 	}
 
-	token, err = s.activator.Activate(ctx, key, s.machineID)
+	// Cache miss or expired: activate via network.
+	raw, err := s.activator.Activate(ctx, key, s.machineID)
 	if err != nil {
-		return map[string]interface{}{}, err
+		return nil, mapNetworkError(err)
 	}
 
-	claims, err := s.validator.Validate(token, s.machineID)
+	lic, err := s.validator.Validate(raw, s.machineID)
 	if err != nil {
-		return map[string]interface{}{}, err
+		return nil, fmt.Errorf("licenselatte: server returned invalid token: %w", err)
 	}
 
-	if err := s.store.SaveToken(token); err != nil {
-		return map[string]interface{}{}, err
-	}
+	_ = s.store.SaveToken(raw)
 
-	return claims, nil
+	return domainToPublic(lic), nil
 }
 
-func (s *SDK) silentCheck(key string) {
-	token, err := s.activator.Activate(context.Background(), key, s.machineID)
+// Check validates the locally-stored token without making a network call.
+// Returns ErrNotActivated if Activate has never been called on this machine.
+// Returns ErrLicenseExpired if the token is past its grace period.
+//
+// Use this for periodic in-process checks (e.g. before allowing a gated feature).
+func (s *SDK) Check() (*License, error) {
+	raw, err := s.store.LoadToken()
 	if err != nil {
+		return nil, ErrNotActivated
+	}
+
+	lic, err := s.validator.Validate(raw, s.machineID)
+	if err != nil {
+		if errors.Is(err, ports.ErrLicenseInactiveOrExpired) {
+			return nil, ErrLicenseExpired
+		}
+		return nil, ErrNotActivated
+	}
+
+	if s.shouldTryRenew(lic) {
+		go s.silentRenew(lic)
+	}
+
+	if !lic.IsValid() {
+		return nil, ErrNotActivated
+	}
+
+	return domainToPublic(lic), nil
+}
+
+func (s *SDK) shouldTryRenew(lic *domain.License) bool {
+	s.renewMu.Lock()
+	defer s.renewMu.Unlock()
+
+	if lic.LicenseType == licenseTypePerpetualFixed {
+		return false
+	}
+
+	if s.renewInFlight {
+		return false
+	}
+
+	now := time.Now()
+	if now.Sub(s.lastRenewAttempt) < minRenewalTime {
+		return false
+	}
+	if now.Sub(lic.IssuedAt) < maxRenewalTime {
+		return false
+	}
+	s.renewInFlight = true
+	s.lastRenewAttempt = now
+	return true
+}
+
+// silentRenew calls POST /v1/renew in the background to keep the token fresh.
+// Errors are silently ignored — the existing cached token remains valid until
+// its grace period elapses.
+func (s *SDK) silentRenew(lic *domain.License) {
+	s.renewMu.Lock()
+	defer func() {
+		s.renewMu.Unlock()
+		s.renewInFlight = false
+	}()
+
+	if lic.ActivationID == "" || lic.Key == "" {
 		return
 	}
-	_, err = s.validator.Validate(token, s.machineID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	now := time.Now()
+
+	if now.Sub(s.lastRenewAttempt) < minRenewalTime {
+		return // rate limit
+	}
+
+	raw, err := s.renewer.Renew(ctx, lic.ActivationID, lic.Key, s.machineID)
 	if err != nil {
+		// Check if errors is of type invalid license error
+		if _, ok := errors.AsType[*ports.InvalidLicenseError](err); ok {
+			// If invalid, delete it from the store
+			_ = s.store.SaveToken("")
+		}
 		return
 	}
-	_ = s.store.SaveToken(token)
+
+	if _, err := s.validator.Validate(raw, s.machineID); err != nil {
+		return
+	}
+
+	_ = s.store.SaveToken(raw)
+}
+
+func (s *SDK) validateLicenseKey(sanitized string) error {
+	// A raw license key is: 6-char short_id + 22 random + 2 checksum = 30 chars.
+	if len(sanitized) != 30 {
+		return ErrInvalidKey
+	}
+
+	// Verify the short_id prefix matches this project.
+	if sanitized[:6] != s.appKey[:6] {
+		return ErrInvalidKey
+	}
+
+	// Verify checksum on the non-prefix part.
+	if !crypto.ValidateKey(sanitized[6:], 2) {
+		return ErrInvalidKey
+	}
+	return nil
 }
