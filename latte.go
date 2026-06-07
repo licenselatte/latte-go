@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"github.com/denisbrodbeck/machineid"
-	"github.com/licenselatte/sdk-go/internal/core/domain"
-	"github.com/licenselatte/sdk-go/internal/core/ports"
-	"github.com/licenselatte/sdk-go/internal/infra/crypto"
-	latthttp "github.com/licenselatte/sdk-go/internal/infra/http"
-	"github.com/licenselatte/sdk-go/internal/infra/storage"
+	"github.com/licenselatte/latte-go/internal/core/domain"
+	"github.com/licenselatte/latte-go/internal/core/ports"
+	"github.com/licenselatte/latte-go/internal/infra/crypto"
+	latthttp "github.com/licenselatte/latte-go/internal/infra/http"
+	"github.com/licenselatte/latte-go/internal/infra/storage"
 )
 
 type Config struct {

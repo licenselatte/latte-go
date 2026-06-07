@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/licenselatte/sdk-go/internal/core/domain"
-	"github.com/licenselatte/sdk-go/internal/core/ports"
-	"github.com/licenselatte/sdk-go/internal/infra/crypto"
+	"github.com/licenselatte/latte-go/internal/core/domain"
+	"github.com/licenselatte/latte-go/internal/core/ports"
+	"github.com/licenselatte/latte-go/internal/infra/crypto"
 )
 
 func parseAppID(appID string) (appEnv, string, error) {

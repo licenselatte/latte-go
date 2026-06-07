@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/licenselatte/sdk-go/internal/core/domain"
-	"github.com/licenselatte/sdk-go/internal/core/ports"
+	"github.com/licenselatte/latte-go/internal/core/domain"
+	"github.com/licenselatte/latte-go/internal/core/ports"
 )
 
 type ed25519Validator struct {

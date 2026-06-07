@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/licenselatte/sdk-go/internal/core/ports"
+import "github.com/licenselatte/latte-go/internal/core/ports"
 
 type MemoryStorage struct {
 	token string

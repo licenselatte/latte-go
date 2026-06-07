@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/licenselatte/sdk-go/internal/core/ports"
+	"github.com/licenselatte/latte-go/internal/core/ports"
 )
 
 type httpClient struct {

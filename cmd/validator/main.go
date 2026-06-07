@@ -1,3 +1,9 @@
+// validator is a low-level debug tool that activates a license and prints
+// the raw JWT claims. Useful for verifying server-side token contents.
+//
+// Usage:
+//
+//	go run ./cmd/validator
 package main
 
 import (
@@ -5,83 +11,58 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/licenselatte/sdk-go/internal/infra/crypto"
-	"github.com/licenselatte/sdk-go/internal/infra/http"
-	"github.com/licenselatte/sdk-go/internal/infra/storage"
+	"github.com/licenselatte/latte-go/internal/infra/crypto"
+	latthttp "github.com/licenselatte/latte-go/internal/infra/http"
 )
 
-const publicKeyHex = "6dcefb3bc8ca08b7be423ea0c95f819e130d42fbd8b718c23f89d8f041eb54fc"
+const (
+	publicKeyHex = "6dcefb3bc8ca08b7be423ea0c95f819e130d42fbd8b718c23f89d8f041eb54fc"
+	appID        = "pk_local_AHAK85389VQYXYB6S4BW66SKE53TWVTS"
+	licenseKey   = "AHAK856T8PQS0245KDB1FEC9VXA998"
+	machineID    = "test-machine-001"
+)
 
 func main() {
 	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
-	pubKey := ed25519.PublicKey(pubKeyBytes)
+	validator := crypto.NewEd25519Validator(ed25519.PublicKey(pubKeyBytes), "licenselatte")
 
-	validator := crypto.NewEd25519Validator(pubKey, "licenselatte")
+	client := latthttp.NewHttpClient("http://localhost:8080", appID)
 
-	appId := "pk_local_BW7X9HRMTHA2B2PN7G5SXBN646PW4321"
-	appIdParts := strings.Split(appId, "_")
-	shortId := appIdParts[len(appIdParts)-1][:6]
+	key := crypto.SanitizeKey(licenseKey)
+	fmt.Printf("Sanitized key: %s\n\n", key)
 
-	appIdValid := crypto.ValidateKey(appIdParts[2], 4)
-	if !appIdValid {
-		fmt.Println("invalid AppID")
-		return
-	}
-
-	dir, err := os.UserConfigDir()
-	valid := true
-	if err == nil {
-		dir = filepath.Join(dir, "LicenseLatte")
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			valid = false
-		}
-		dir = filepath.Join(dir, fmt.Sprintf("%s.latte", appIdParts[2]))
-	}
-	if !valid {
-		dir = "./.licenselatte"
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			panic("could not create storage directory: " + err.Error())
-		}
-		dir = filepath.Join(dir, "token.latte")
-	}
-
-	fmt.Printf("storage dir: %s\n", dir)
-	s := storage.NewFileStorage(dir)
-
-	client := http.NewHttpClient("http://localhost:8080")
-
-	key := crypto.SanitizeKey("BW7X9-HZYMB-AT12Z-ZW40K-YRSBB-XRCDC")
-
-	if key[:6] != shortId {
-		fmt.Println("invalid key")
-		return
-	}
-
-	valid = crypto.ValidateKey(key[6:], 2)
-	if !valid {
-		fmt.Println("invalid key")
-		return
-	}
-
-	if token, err := s.LoadToken(); err == nil {
-		fmt.Printf("token:%s\n", token)
-	}
-
-	t, err := client.Activate(context.Background(), key, "aaa")
+	fmt.Println("→ Activating…")
+	token, err := client.Activate(context.Background(), key, machineID)
 	if err != nil {
-		panic("could not activate: " + err.Error())
+		fmt.Printf("Activation error: %v\n", err)
+		return
 	}
-	claims, err2 := validator.Validate(t, "aaa")
-	fmt.Printf("token:%s\nclaims:%+v\nerr:%v\nerr2:%v\n\n", t, claims, err, err2)
+	fmt.Printf("Token: %s\n\n", token)
 
-	if err == nil {
-		if err := s.SaveToken(t); err != nil {
-			panic("could not save token: " + err.Error())
-		}
+	fmt.Println("→ Validating…")
+	lic, err := validator.Validate(token, machineID)
+	if err != nil {
+		fmt.Printf("Validation error: %v\n", err)
+		return
 	}
+	fmt.Printf("Key:           %s\n", lic.Key)
+	fmt.Printf("ActivationID:  %s\n", lic.ActivationID)
+	fmt.Printf("ProjectID:     %s\n", lic.ProjectID)
+	fmt.Printf("ExpiresAt:     %s\n", lic.ExpiresAt)
+	fmt.Printf("GracePeriod:   %s\n", lic.GracePeriod)
+	fmt.Printf("InGracePeriod: %v\n", lic.InGracePeriod)
 
+	fmt.Println("\n→ Renewing…")
+	renewed, err := client.Renew(context.Background(), lic.ActivationID, lic.Key, machineID)
+	if err != nil {
+		fmt.Printf("Renew error: %v\n", err)
+		return
+	}
+	lic2, err := validator.Validate(renewed, machineID)
+	if err != nil {
+		fmt.Printf("Renew validation error: %v\n", err)
+		return
+	}
+	fmt.Printf("Renewed token valid — ExpiresAt: %s\n", lic2.ExpiresAt)
 }

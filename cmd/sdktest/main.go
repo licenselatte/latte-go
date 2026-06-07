@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	latte "github.com/licenselatte/sdk-go"
+	latte "github.com/licenselatte/latte-go"
 )
 
 // Replace these with real values from your local dashboard.

@@ -1,4 +1,4 @@
-module github.com/licenselatte/sdk-go
+module github.com/licenselatte/latte-go
 
 go 1.26
 

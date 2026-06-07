@@ -1,6 +1,6 @@
 package ports
 
-import "github.com/licenselatte/sdk-go/internal/core/domain"
+import "github.com/licenselatte/latte-go/internal/core/domain"
 
 // Validator verifies a JWT token against the server's public key and the
 // current machine ID, returning a typed License on success.
