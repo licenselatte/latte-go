@@ -51,7 +51,6 @@ func main() {
 	fmt.Printf("ProjectID:     %s\n", lic.ProjectID)
 	fmt.Printf("ExpiresAt:     %s\n", lic.ExpiresAt)
 	fmt.Printf("GracePeriod:   %s\n", lic.GracePeriod)
-	fmt.Printf("InGracePeriod: %v\n", lic.InGracePeriod)
 
 	fmt.Println("\n→ Renewing…")
 	renewed, err := client.Renew(context.Background(), lic.ActivationID, lic.Key, machineID)
