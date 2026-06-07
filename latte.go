@@ -218,8 +218,9 @@ func (s *SDK) silentRenew(lic *domain.License) {
 
 	raw, err := s.renewer.Renew(ctx, lic.ActivationID, lic.Key, s.machineID)
 	if err != nil {
+		var licenseError *ports.InvalidLicenseError
 		// Check if errors is of type invalid license error
-		if _, ok := errors.AsType[*ports.InvalidLicenseError](err); ok {
+		if errors.As(err, &licenseError) {
 			// If invalid, delete it from the store
 			_ = s.store.SaveToken("")
 		}
