@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/licenselatte/latte-go/internal/core/ports"
@@ -89,7 +90,9 @@ func (c *httpClient) post(ctx context.Context, path string, body []byte) (string
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ports.ErrNetworkError, err)
 	}
-	defer resp.Body.Close()
+	defer func(b io.ReadCloser) {
+		_ = b.Close()
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		var errBody errorResponse
