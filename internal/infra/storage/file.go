@@ -1,10 +1,14 @@
 package storage
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/licenselatte/latte-go/internal/core/domain"
 )
 
 type FileStorage struct {
@@ -18,57 +22,61 @@ func NewFileStorage(location string) *FileStorage {
 type activationRecord struct {
 	Timestamp int64
 	Token     string
+	Submaster string
+	Project   string
+	Daily     string
 }
 
-// map app id to token
 func (fs *FileStorage) parseFile() (*activationRecord, error) {
-	file, err := os.Open(fs.location)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-
-	var timestamp int64
-	var token string
-	n, err := fmt.Fscanf(reader, "%d:%s", &timestamp, &token)
+	data, err := os.ReadFile(fs.location)
 	if err != nil {
 		return nil, err
 	}
 
-	if n != 2 {
+	line := strings.TrimSpace(string(data))
+
+	// Try JSON first
+	var record activationRecord
+	if err := json.Unmarshal([]byte(line), &record); err == nil {
+		return &record, nil
+	}
+
+	// Fall back to legacy "timestamp:token" format
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid file format")
 	}
 
-	return &activationRecord{
-		Timestamp: timestamp,
-		Token:     token,
-	}, nil
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timestamp: %w", err)
+	}
 
+	return &activationRecord{
+		Timestamp: ts,
+		Token:     parts[1],
+	}, nil
 }
 
 func (fs *FileStorage) writeFile(record *activationRecord) error {
-	file, err := os.Create(fs.location)
+	data, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	writer := bufio.NewWriter(file)
-	line := fmt.Sprintf("%d:%s", record.Timestamp, record.Token)
-	_, err = writer.WriteString(line)
-	if err != nil {
-		return err
-	}
-	writer.Flush()
 
-	return nil
+	return os.WriteFile(fs.location, data, 0600)
 }
 
-func (fs *FileStorage) SaveToken(token string) error {
+func (fs *FileStorage) SaveToken(token string, chain *domain.CertChain) error {
 	record := &activationRecord{
 		Timestamp: time.Now().Unix(),
 		Token:     token,
+	}
+
+	if chain != nil {
+		record.Submaster = chain.Submaster
+		record.Project = chain.Project
+		record.Daily = chain.Daily
 	}
 
 	if err := fs.writeFile(record); err != nil {
@@ -78,11 +86,17 @@ func (fs *FileStorage) SaveToken(token string) error {
 	return nil
 }
 
-func (fs *FileStorage) LoadToken() (string, error) {
+func (fs *FileStorage) LoadToken() (string, *domain.CertChain, error) {
 	record, err := fs.parseFile()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	return record.Token, nil
+	chain := &domain.CertChain{
+		Submaster: record.Submaster,
+		Project:   record.Project,
+		Daily:     record.Daily,
+	}
+
+	return record.Token, chain, nil
 }
