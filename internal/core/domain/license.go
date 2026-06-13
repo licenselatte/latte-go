@@ -15,6 +15,9 @@ type License struct {
 	// ProjectID is the UUID of the project this license belongs to.
 	ProjectID string
 
+	// MachineIDHash is the SHA256 hash of the machine ID.
+	MachineIDHash string
+
 	// IssuedAt is the timestamp when the server issued the license.
 	IssuedAt time.Time
 
