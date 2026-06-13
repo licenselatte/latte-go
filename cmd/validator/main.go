@@ -8,12 +8,13 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 
 	"github.com/licenselatte/latte-go/internal/infra/crypto"
 	latthttp "github.com/licenselatte/latte-go/internal/infra/http"
+	"github.com/licenselatte/latte-go/internal/infra/validate"
+	"github.com/licenselatte/latte-go/internal/infra/verify"
 )
 
 const (
@@ -25,15 +26,13 @@ const (
 
 func main() {
 	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
-	validator := crypto.NewEd25519Validator(ed25519.PublicKey(pubKeyBytes), "licenselatte")
-
 	client := latthttp.NewHttpClient("http://localhost:8080", appID)
 
 	key := crypto.SanitizeKey(licenseKey)
 	fmt.Printf("Sanitized key: %s\n\n", key)
 
 	fmt.Println("→ Activating…")
-	token, err := client.Activate(context.Background(), key, machineID)
+	token, chain, err := client.Activate(context.Background(), key, machineID)
 	if err != nil {
 		fmt.Printf("Activation error: %v\n", err)
 		return
@@ -41,7 +40,13 @@ func main() {
 	fmt.Printf("Token: %s\n\n", token)
 
 	fmt.Println("→ Validating…")
-	lic, err := validator.Validate(token, machineID)
+	lic, err := verify.VerifyActivation(pubKeyBytes, token, chain)
+	if err != nil {
+		fmt.Printf("Verification error: %v\n", err)
+		return
+	}
+
+	err = validate.Validate(lic, machineID)
 	if err != nil {
 		fmt.Printf("Validation error: %v\n", err)
 		return
@@ -53,15 +58,22 @@ func main() {
 	fmt.Printf("GracePeriod:   %s\n", lic.GracePeriod)
 
 	fmt.Println("\n→ Renewing…")
-	renewed, err := client.Renew(context.Background(), lic.ActivationID, lic.Key, machineID)
+	renewed, chain, err := client.Renew(context.Background(), lic.ActivationID, lic.Key, machineID)
 	if err != nil {
 		fmt.Printf("Renew error: %v\n", err)
 		return
 	}
-	lic2, err := validator.Validate(renewed, machineID)
+	lic2, err := verify.VerifyActivation(pubKeyBytes, renewed, chain)
+	if err != nil {
+		fmt.Printf("Renew verification error: %v\n", err)
+		return
+	}
+
+	err = validate.Validate(lic2, machineID)
 	if err != nil {
 		fmt.Printf("Renew validation error: %v\n", err)
 		return
 	}
+
 	fmt.Printf("Renewed token valid — ExpiresAt: %s\n", lic2.ExpiresAt)
 }
