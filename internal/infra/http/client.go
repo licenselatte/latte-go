@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/google/uuid"
+	"github.com/licenselatte/latte-go/internal/core/domain"
 	"github.com/licenselatte/latte-go/internal/core/ports"
 )
 
@@ -37,11 +39,7 @@ type activateRequest struct {
 	MachineIDHash string `json:"machine_id"`
 }
 
-type activateResponse struct {
-	Token string `json:"token"`
-}
-
-func (c *httpClient) Activate(ctx context.Context, licenseKey, machineID string) (string, error) {
+func (c *httpClient) Activate(ctx context.Context, licenseKey, machineID string) (string, *domain.CertChain, error) {
 	body, _ := json.Marshal(activateRequest{
 		ProjectKey:    c.projectKey,
 		LicenseKey:    licenseKey,
@@ -59,7 +57,7 @@ type renewRequest struct {
 	MachineIDHash string `json:"machine_id"`
 }
 
-func (c *httpClient) Renew(ctx context.Context, activationID, licenseKey, machineID string) (string, error) {
+func (c *httpClient) Renew(ctx context.Context, activationID, licenseKey, machineID string) (string, *domain.CertChain, error) {
 	body, _ := json.Marshal(renewRequest{
 		ActivationID:  activationID,
 		LicenseKey:    licenseKey,
@@ -72,23 +70,25 @@ func (c *httpClient) Renew(ctx context.Context, activationID, licenseKey, machin
 // --- shared POST helper ---
 
 type tokenResponse struct {
-	Token string `json:"token"`
+	Token        string           `json:"token"`
+	ActivationID uuid.UUID        `json:"activation_id"`
+	Chain        domain.CertChain `json:"chain"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-func (c *httpClient) post(ctx context.Context, path string, body []byte) (string, error) {
+func (c *httpClient) post(ctx context.Context, path string, body []byte) (string, *domain.CertChain, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+path, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("licenselatte: build request: %w", err)
+		return "", nil, fmt.Errorf("licenselatte: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ports.ErrNetworkError, err)
+		return "", nil, fmt.Errorf("%w: %w", ports.ErrNetworkError, err)
 	}
 	defer func(b io.ReadCloser) {
 		_ = b.Close()
@@ -103,25 +103,28 @@ func (c *httpClient) post(ctx context.Context, path string, body []byte) (string
 		}
 		switch resp.StatusCode {
 		case http.StatusNotFound:
-			return "", ports.ErrLicenseNotFound
+			return "", nil, ports.ErrLicenseNotFound
 		case http.StatusForbidden:
-			return "", ports.ErrLicenseInactiveOrExpired
+			return "", nil, ports.ErrLicenseInactiveOrExpired
 		case http.StatusConflict:
-			return "", ports.ErrSeatLimitReached
+			return "", nil, ports.ErrSeatLimitReached
 		case http.StatusUnauthorized:
-			return "", ports.ErrInvalidProjectKey
+			return "", nil, ports.ErrInvalidProjectKey
 		default:
-			return "", fmt.Errorf("licenselatte: %s", msg)
+			return "", nil, fmt.Errorf("licenselatte: %s", msg)
 		}
 	}
 
 	var result tokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("licenselatte: decode response: %w", err)
+		return "", nil, fmt.Errorf("licenselatte: decode response: %w", err)
 	}
 	if result.Token == "" {
-		return "", fmt.Errorf("licenselatte: server returned empty token")
+		return "", nil, fmt.Errorf("licenselatte: server returned empty token")
+	}
+	if result.Chain.Daily == "" || result.Chain.Project == "" || result.Chain.Submaster == "" {
+		return "", nil, fmt.Errorf("licenselatte: server returned empty chain")
 	}
 
-	return result.Token, nil
+	return result.Token, &result.Chain, nil
 }
