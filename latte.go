@@ -27,6 +27,8 @@ import (
 	"github.com/licenselatte/latte-go/internal/infra/crypto"
 	latthttp "github.com/licenselatte/latte-go/internal/infra/http"
 	"github.com/licenselatte/latte-go/internal/infra/storage"
+	"github.com/licenselatte/latte-go/internal/infra/validate"
+	"github.com/licenselatte/latte-go/internal/infra/verify"
 )
 
 type Config struct {
@@ -40,12 +42,12 @@ type SDK struct {
 	appKey           string // 32-char portion after "pk_{env}_"
 	activator        ports.Activator
 	renewer          ports.Renewer
-	validator        ports.Validator
 	store            ports.Storage
 	machineID        string
 	renewMu          sync.Mutex
 	lastRenewAttempt time.Time
 	renewInFlight    bool
+	pubKey           ed25519.PublicKey
 }
 
 // New creates a new SDK instance. Returns an error if AppID is invalid or
@@ -69,7 +71,6 @@ func New(config *Config) (*SDK, error) {
 	client := latthttp.NewHttpClient(apiURL, config.AppID)
 
 	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
-	validator := crypto.NewEd25519Validator(ed25519.PublicKey(pubKeyBytes), "licenselatte")
 
 	storePath, err := resolveStoragePath(appKey)
 	if err != nil {
@@ -86,9 +87,9 @@ func New(config *Config) (*SDK, error) {
 		appKey:    appKey,
 		activator: client,
 		renewer:   client,
-		validator: validator,
 		store:     storage.NewFileStorage(storePath),
 		machineID: machineID,
+		pubKey:    pubKeyBytes,
 	}, nil
 }
 
@@ -110,31 +111,38 @@ func (s *SDK) ActivateWithContext(ctx context.Context, key string) (*License, er
 	}
 
 	// Fast path: valid cached token.
-	if raw, err := s.store.LoadToken(); err == nil {
-		if lic, err := s.validator.Validate(raw, s.machineID); err == nil {
-			if s.shouldTryRenew(lic) {
-				// Renew in the background so it's fresh next time.
-				go s.silentRenew(lic)
-			}
+	if raw, chain, err := s.store.LoadToken(); err == nil {
+		if lic, err := verify.VerifyActivation(s.pubKey, raw, chain); err == nil {
+			if err := validate.Validate(lic, s.machineID); err == nil {
+				if s.shouldTryRenew(lic) {
+					// Renew in the background so it's fresh next time.
+					go s.silentRenew(lic)
+				}
 
-			if lic.Key == key && lic.IsValid() {
-				return domainToPublic(lic), nil
+				if lic.Key == key && lic.IsValid() {
+					return domainToPublic(lic), nil
+				}
 			}
 		}
 	}
 
 	// Cache miss or expired: activate via network.
-	raw, err := s.activator.Activate(ctx, key, s.machineID)
+	raw, chain, err := s.activator.Activate(ctx, key, s.machineID)
 	if err != nil {
 		return nil, mapNetworkError(err)
 	}
 
-	lic, err := s.validator.Validate(raw, s.machineID)
+	lic, err := verify.VerifyActivation(s.pubKey, raw, chain)
 	if err != nil {
 		return nil, fmt.Errorf("licenselatte: server returned invalid token: %w", err)
 	}
 
-	_ = s.store.SaveToken(raw)
+	err = validate.Validate(lic, s.machineID)
+	if err != nil {
+		return nil, fmt.Errorf("licenselatte: server returned invalid token: %w", err)
+	}
+
+	_ = s.store.SaveToken(raw, chain)
 
 	return domainToPublic(lic), nil
 }
@@ -145,16 +153,20 @@ func (s *SDK) ActivateWithContext(ctx context.Context, key string) (*License, er
 //
 // Use this for periodic in-process checks (e.g. before allowing a gated feature).
 func (s *SDK) Check() (*License, error) {
-	raw, err := s.store.LoadToken()
+	raw, chain, err := s.store.LoadToken()
 	if err != nil {
 		return nil, ErrNotActivated
 	}
 
-	lic, err := s.validator.Validate(raw, s.machineID)
+	lic, err := verify.VerifyActivation(s.pubKey, raw, chain)
 	if err != nil {
 		if errors.Is(err, ports.ErrLicenseInactiveOrExpired) {
 			return nil, ErrLicenseExpired
 		}
+		return nil, ErrNotActivated
+	}
+	err = validate.Validate(lic, s.machineID)
+	if err != nil {
 		return nil, ErrNotActivated
 	}
 
@@ -216,22 +228,26 @@ func (s *SDK) silentRenew(lic *domain.License) {
 		return // rate limit
 	}
 
-	raw, err := s.renewer.Renew(ctx, lic.ActivationID, lic.Key, s.machineID)
+	raw, chain, err := s.renewer.Renew(ctx, lic.ActivationID, lic.Key, s.machineID)
 	if err != nil {
 		var licenseError *ports.InvalidLicenseError
 		// Check if errors is of type invalid license error
 		if errors.As(err, &licenseError) {
 			// If invalid, delete it from the store
-			_ = s.store.SaveToken("")
+			_ = s.store.SaveToken("", nil)
 		}
 		return
 	}
 
-	if _, err := s.validator.Validate(raw, s.machineID); err != nil {
+	if _, err := verify.VerifyActivation(s.pubKey, raw, chain); err != nil {
 		return
 	}
 
-	_ = s.store.SaveToken(raw)
+	if err := validate.Validate(lic, s.machineID); err != nil {
+		return
+	}
+
+	_ = s.store.SaveToken(raw, chain)
 }
 
 func (s *SDK) validateLicenseKey(sanitized string) error {
