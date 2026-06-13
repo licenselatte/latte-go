@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/licenselatte/latte-go/internal/core/domain"
 )
 
 type InvalidLicenseError struct {
@@ -27,15 +29,16 @@ var (
 	ErrSeatLimitReached         = NewInvalidLicenseError("seat limit reached")
 	ErrInvalidProjectKey        = NewInvalidLicenseError("invalid project key")
 	ErrGracePeriodExpired       = NewInvalidLicenseError("grace period expired")
+	ErrLicenseTooOld            = NewInvalidLicenseError("license too old")
 )
 
 // Activator performs the initial activation of a license key on this machine.
 type Activator interface {
-	Activate(ctx context.Context, licenseKey, machineID string) (token string, err error)
+	Activate(ctx context.Context, licenseKey, machineID string) (token string, chain *domain.CertChain, err error)
 }
 
 // Renewer refreshes an existing activation token while the license is still valid.
 // It requires the activation_id from the previously issued token.
 type Renewer interface {
-	Renew(ctx context.Context, activationID, licenseKey, machineID string) (token string, err error)
+	Renew(ctx context.Context, activationID, licenseKey, machineID string) (token string, chain *domain.CertChain, err error)
 }
