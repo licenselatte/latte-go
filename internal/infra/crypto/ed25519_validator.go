@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/licenselatte/latte-go/internal/core/domain"
 	"github.com/licenselatte/latte-go/internal/core/ports"
 )
+
+const certIssuer = "licenselatte"
 
 type ed25519Validator struct {
 	publicKey ed25519.PublicKey
@@ -115,4 +118,36 @@ func buildLicense(claims jwt.MapClaims, expTime time.Time, iatTime time.Time, gr
 		GracePeriod:  grace,
 		Claims:       map[string]interface{}(claims),
 	}
+}
+
+func VerifyCert(parentPub ed25519.PublicKey, certJWT string) (jwt.MapClaims, error) {
+	token, err := jwt.Parse(certJWT, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodEd25519); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return parentPub, nil
+	}, jwt.WithIssuedAt(), jwt.WithIssuer(certIssuer))
+	if err != nil {
+		return nil, err
+	}
+	mc, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return nil, errors.New("cert: invalid claims")
+	}
+	return mc, nil
+}
+
+func PubKeyFromCert(claims jwt.MapClaims, pubField string) (ed25519.PublicKey, error) {
+	raw, ok := claims[pubField].(string)
+	if !ok {
+		return nil, fmt.Errorf("cert: missing %q field", pubField)
+	}
+	b, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("cert: %q is not valid hex: %w", pubField, err)
+	}
+	if len(b) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("cert: %q must be %d bytes, got %d", pubField, ed25519.PublicKeySize, len(b))
+	}
+	return ed25519.PublicKey(b), nil
 }
