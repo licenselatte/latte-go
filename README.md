@@ -119,7 +119,6 @@ The `AppID` encodes the environment and is validated on `New`. A checksum is emb
 ```go
 func New(config *Config) (*SDK, error)
 ```
-```
 
 Creates and returns a new SDK instance. Call once at application startup and reuse the returned `*SDK` for the lifetime of the process.
 
@@ -127,6 +126,7 @@ Creates and returns a new SDK instance. Call once at application startup and reu
 - `AppID` is malformed or has an invalid checksum (`ErrInvalidAppID`, `ErrInvalidAppIDChecksum`)
 - The token storage directory cannot be created (`ErrStorageInitFailed`)
 - The machine fingerprint cannot be read (`ErrMachineIDFailed`)
+
 
 ### Activate / ActivateWithContext
 
