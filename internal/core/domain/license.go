@@ -1,6 +1,8 @@
 package domain
 
-import "time"
+import (
+	"time"
+)
 
 // License is the validated, in-memory representation of an active license token.
 // It is produced by the Validator and consumed by the SDK's public API.
@@ -39,5 +41,5 @@ type License struct {
 
 // IsValid reports whether the license is currently usable (not past grace period).
 func (l *License) IsValid() bool {
-	return time.Since(l.IssuedAt) > l.GracePeriod
+	return time.Since(l.IssuedAt) <= l.GracePeriod
 }
