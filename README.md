@@ -295,9 +295,6 @@ The `AppID` prefix determines which API endpoint the SDK talks to:
 |---|---|---|
 | `pk_live_` | `https://api.licenselatte.com` | Production |
 | `pk_test_` | `https://test.api.licenselatte.com` | Sandbox / CI |
-| `pk_local_` | `http://localhost:8080` | Local development |
-
-Use `pk_local_` during development to point at a locally-running LicenseLatte API instance. Local and test licenses are excluded from subscription seat limits.
 
 ---
 
