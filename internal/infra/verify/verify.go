@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	issuer = "licenselatte"
+	issuer         = "licenselatte"
+	maxGracePeriod = 90 * 24 * time.Hour
 )
 
 func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.CertChain) (*domain.License, error) {
@@ -113,6 +114,10 @@ func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.C
 	// Cross-check: activation JWT exp must be before daily cert exp.
 	if claims.IssuedAt.After(dailyExpTime) {
 		return nil, fmt.Errorf("verify: activation JWT exp (%s) is after daily cert exp (%s)", claims.ExpiresAt, dailyExpTime)
+	}
+
+	if claims.GracePeriod > maxGracePeriod {
+		return nil, fmt.Errorf("verify: grace period too long: %s", claims.GracePeriod)
 	}
 
 	return claims, nil
