@@ -15,7 +15,10 @@ const (
 	testURL   = "https://test.api.licenselatte.com"
 	localURL  = "http://localhost:8080"
 
-	publicKeyHex = "6dcefb3bc8ca08b7be423ea0c95f819e130d42fbd8b718c23f89d8f041eb54fc"
+	// Root master public key (Ed25519) used to verify the server's certificate chain. This key is hardcoded in the SDK and should not be changed.
+	// Fingerprint: 49C1CA77D17984E0D25C0994D626409AD567D479
+	// Verify: gpg --recv-keys 49C1CA77D17984E0D25C0994D626409AD567D479
+	publicKeyHex = "6773cdfdfb7fc44f13f097449b715e7147a2d73f525d9f09a8d25229e458a2fb"
 
 	// minRenewalTime is the minimum time before the SDK can execute a renew request agains the server
 	minRenewalTime = 5 * time.Minute
