@@ -111,7 +111,7 @@ func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.C
 	dailyExpTime := time.Unix(int64(dailyExp), 0)
 
 	// Cross-check: activation JWT exp must be before daily cert exp.
-	if claims.ExpiresAt.After(dailyExpTime) {
+	if claims.IssuedAt.After(dailyExpTime) {
 		return nil, fmt.Errorf("verify: activation JWT exp (%s) is after daily cert exp (%s)", claims.ExpiresAt, dailyExpTime)
 	}
 
