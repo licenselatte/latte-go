@@ -160,15 +160,16 @@ Returns `ErrLicenseExpired` if the token's grace period has elapsed.
 
 ```go
 type License struct {
-    Key          string            // raw license key (no hyphens)
-    ActivationID string            // server UUID for this machine's activation slot
-    ProjectID    string            // UUID of the owning project
-    IssuedAt     time.Time         // when the server last issued / renewed this token
-    ExpiresAt    time.Time         // hard expiry of the license (year 2099 for perpetual_fixed)
-    GracePeriod  time.Duration     // offline tolerance window from IssuedAt
-    InGracePeriod bool             // true → device has been offline a long time; reconnect soon
-    LicenseType  string            // "perpetual_fixed" | "perpetual" | "expiring"
-    Claims       map[string]any    // full JWT payload (includes custom metadata fields)
+    Key           string            // raw license key (no hyphens)
+    ActivationID  string            // server UUID for this machine's activation slot
+    ProjectID     string            // UUID of the owning project
+    IssuedAt      time.Time         // when the server last issued / renewed this token
+    ExpiresAt     time.Time         // hard expiry of the license (year 2099 for perpetual_fixed)
+    MachineIDHash string            // machine fingerprint 
+    GracePeriod   time.Duration     // offline tolerance window from IssuedAt
+    InGracePeriod bool              // true → device has been offline a long time; reconnect soon
+    LicenseType   string            // "perpetual_fixed" | "perpetual" | "expiring"
+    Claims        map[string]any    // full JWT payload (includes custom metadata fields)
 }
 ```
 
