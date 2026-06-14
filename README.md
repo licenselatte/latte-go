@@ -1,6 +1,6 @@
 # latte-go
 
-Official Go SDK for [LicenseLatte](https://licenselatte.com), the B2B software licensing platform.
+Official Go SDK for [LicenseLatte](https://licenselatte.com), the software licensing platform.
 
 Embed license enforcement directly into your Go application in a few lines of code. The SDK handles activation, offline grace periods, background token renewal, and local token caching transparently.
 
