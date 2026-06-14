@@ -2,7 +2,6 @@ package validate
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/licenselatte/latte-go/internal/core/domain"
@@ -23,7 +22,7 @@ func Validate(license *domain.License, machineID string) error {
 	if license.GracePeriod.Seconds() <= 0 {
 		return fmt.Errorf("invalid license: grace_period is zero or negative")
 	}
-	if !strings.EqualFold(license.MachineIDHash, machineID) {
+	if license.MachineIDHash == machineID {
 		return fmt.Errorf("invalid license: machine_id does not match")
 	}
 	if license.ExpiresAt.Before(license.IssuedAt) {
