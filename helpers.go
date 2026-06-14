@@ -69,6 +69,18 @@ func mapNetworkError(err error) error {
 func domainToPublic(d *domain.License) *License {
 	sinceActivation := time.Since(d.IssuedAt)
 	inGracePeriod := sinceActivation > maxRenewalTime && sinceActivation < d.GracePeriod
+	publicMetadata := make(map[string]string)
+	if pmd, ok := d.Claims["pmd"]; ok {
+		if pmdMap, ok := pmd.(map[string]interface{}); ok {
+			for k, v := range pmdMap {
+				if strVal, ok := v.(string); ok {
+					publicMetadata[k] = strVal
+				} else {
+					fmt.Printf("Warning: pmd value for key %s is not a string\n", k)
+				}
+			}
+		}
+	}
 
 	return &License{
 		Key:           d.Key,
@@ -79,6 +91,6 @@ func domainToPublic(d *domain.License) *License {
 		ExpiresAt:     d.ExpiresAt,
 		GracePeriod:   d.GracePeriod,
 		InGracePeriod: inGracePeriod,
-		Claims:        d.Claims,
+		Metadata:      publicMetadata,
 	}
 }

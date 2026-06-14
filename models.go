@@ -29,6 +29,6 @@ type License struct {
 	// LicenseType is "perpetual_fixed", "perpetual", or "expiring".
 	LicenseType string
 
-	// Claims is the full JWT payload for access to any custom metadata.
-	Claims map[string]interface{}
+	// Metadata contains the public metadata configured for the license in the dashboard
+	Metadata map[string]string
 }
