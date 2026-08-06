@@ -13,6 +13,12 @@ const (
 )
 
 func Validate(license *domain.License, machineID string) error {
+	return ValidateAt(license, machineID, time.Now())
+}
+
+// ValidateAt is Validate with an injectable clock; see verify.VerifyActivationAt
+// for why this test seam exists. Production code should call Validate.
+func ValidateAt(license *domain.License, machineID string, now time.Time) error {
 	if license.IssuedAt.IsZero() {
 		return fmt.Errorf("invalid license: issued_at is zero")
 	}
@@ -32,7 +38,7 @@ func Validate(license *domain.License, machineID string) error {
 	// perpetual_fixed tokens never expire and have no grc check.
 	// The only requirement is that we haven't somehow passed year 2099.
 	if license.LicenseType == "perpetual_fixed" {
-		if time.Now().After(license.ExpiresAt) {
+		if now.After(license.ExpiresAt) {
 			return ports.ErrLicenseInactiveOrExpired
 		}
 		return nil
@@ -40,7 +46,6 @@ func Validate(license *domain.License, machineID string) error {
 
 	offlineDeadline := license.IssuedAt.Add(license.GracePeriod)
 
-	now := time.Now()
 	if now.After(license.ExpiresAt) {
 		return ports.ErrLicenseInactiveOrExpired
 	}
