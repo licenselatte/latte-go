@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -35,27 +34,12 @@ func (fs *FileStorage) parseFile() (*activationRecord, error) {
 
 	line := strings.TrimSpace(string(data))
 
-	// Try JSON first
 	var record activationRecord
-	if err := json.Unmarshal([]byte(line), &record); err == nil {
-		return &record, nil
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		return nil, fmt.Errorf("invalid file format: %w", err)
 	}
 
-	// Fall back to legacy "timestamp:token" format
-	parts := strings.SplitN(line, ":", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid file format")
-	}
-
-	ts, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
-	}
-
-	return &activationRecord{
-		Timestamp: ts,
-		Token:     parts[1],
-	}, nil
+	return &record, nil
 }
 
 func (fs *FileStorage) writeFile(record *activationRecord) error {
