@@ -4,6 +4,8 @@
 
 Official Go SDK for [LicenseLatte](https://licenselatte.com), the software licensing platform.
 
+Full docs: [licenselatte.com/docs/sdks/go](https://licenselatte.com/docs/sdks/go)
+
 Embed license enforcement directly into your Go application in a few lines of code. The SDK handles activation, offline grace periods, background token renewal, and local token caching transparently.
 
 ---
