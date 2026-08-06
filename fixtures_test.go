@@ -44,7 +44,7 @@ type fixture struct {
 
 func loadFixtures(t *testing.T) []fixture {
 	t.Helper()
-	matches, err := filepath.Glob("testdata/*.json")
+	matches, err := filepath.Glob("testdata/vectors/*.json")
 	if err != nil {
 		t.Fatalf("glob testdata: %v", err)
 	}
