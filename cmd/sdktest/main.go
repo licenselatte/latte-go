@@ -68,5 +68,5 @@ func printLicense(label string, lic *latte.License) {
 	fmt.Printf("  GracePeriod:   %s\n", lic.GracePeriod)
 	fmt.Printf("  InGracePeriod: %v\n", lic.InGracePeriod)
 	fmt.Printf("  LicenseType:   %s\n", lic.LicenseType)
-	fmt.Printf("  Claims:        %v\n", lic.Claims)
+	fmt.Printf("  Metadata:      %v\n", lic.Metadata)
 }
