@@ -120,13 +120,16 @@ func buildLicense(claims jwt.MapClaims, expTime time.Time, iatTime time.Time, gr
 	}
 }
 
-func VerifyCert(parentPub ed25519.PublicKey, certJWT string) (jwt.MapClaims, error) {
+// VerifyCert verifies certJWT was signed by parentPub, evaluating time-based
+// claims (iat/exp/nbf) as of now. Production callers pass time.Now(); tests
+// pass a fixed instant so fixtures are reproducible regardless of wall clock.
+func VerifyCert(parentPub ed25519.PublicKey, certJWT string, now time.Time) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(certJWT, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return parentPub, nil
-	}, jwt.WithIssuedAt(), jwt.WithIssuer(certIssuer))
+	}, jwt.WithIssuedAt(), jwt.WithIssuer(certIssuer), jwt.WithTimeFunc(func() time.Time { return now }))
 	if err != nil {
 		return nil, err
 	}
