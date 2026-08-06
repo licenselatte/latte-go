@@ -16,8 +16,16 @@ const (
 )
 
 func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.CertChain) (*domain.License, error) {
+	return VerifyActivationAt(masterPub, token, chain, time.Now())
+}
+
+// VerifyActivationAt is VerifyActivation with an injectable clock, so tests
+// can replay the shared testdata/ fixtures (each pinned to a fixed instant)
+// without depending on the real wall clock. Production code should call
+// VerifyActivation; this exists purely as a test seam.
+func VerifyActivationAt(masterPub ed25519.PublicKey, token string, chain *domain.CertChain, now time.Time) (*domain.License, error) {
 	// Step 1: Verify submaster cert (signed by master).
-	subClaims, err := llcrypto.VerifyCert(masterPub, chain.Submaster)
+	subClaims, err := llcrypto.VerifyCert(masterPub, chain.Submaster, now)
 	if err != nil {
 		return nil, fmt.Errorf("verify: submaster cert invalid: %w", err)
 	}
@@ -27,7 +35,7 @@ func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.C
 	}
 
 	// Step 2: Verify project cert (signed by submaster).
-	projClaims, err := llcrypto.VerifyCert(submasterPub, chain.Project)
+	projClaims, err := llcrypto.VerifyCert(submasterPub, chain.Project, now)
 	if err != nil {
 		return nil, fmt.Errorf("verify: project cert invalid: %w", err)
 	}
@@ -37,7 +45,7 @@ func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.C
 	}
 
 	// Step 3: Verify daily cert (signed by project key).
-	dailyClaims, err := llcrypto.VerifyCert(projectPub, chain.Daily)
+	dailyClaims, err := llcrypto.VerifyCert(projectPub, chain.Daily, now)
 	if err != nil {
 		return nil, fmt.Errorf("verify: daily cert invalid: %w", err)
 	}
@@ -59,6 +67,7 @@ func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.C
 		// We handle expiry ourselves; passing a large leeway effectively disables
 		// the library's exp check without losing the rest of the validation.
 		jwt.WithLeeway(100*365*24*time.Hour),
+		jwt.WithTimeFunc(func() time.Time { return now }),
 	)
 
 	if err != nil {
