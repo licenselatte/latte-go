@@ -2,8 +2,6 @@ module github.com/licenselatte/latte-go
 
 go 1.21
 
-toolchain go1.26
-
 require (
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
