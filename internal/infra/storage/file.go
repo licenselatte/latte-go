@@ -20,11 +20,11 @@ func NewFileStorage(location string) *FileStorage {
 }
 
 type activationRecord struct {
-	Timestamp int64
-	Token     string
-	Submaster string
-	Project   string
-	Daily     string
+	Timestamp int64  `json:"timestamp"`
+	Token     string `json:"token"`
+	Submaster string `json:"submaster"`
+	Project   string `json:"project"`
+	Daily     string `json:"daily"`
 }
 
 func (fs *FileStorage) parseFile() (*activationRecord, error) {
