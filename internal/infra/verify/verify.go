@@ -81,6 +81,7 @@ func VerifyActivationAt(masterPub ed25519.PublicKey, token string, chain *domain
 
 	claims := &domain.License{
 		Key:           stringClaim(mc, "sub"),
+		Alias:         stringClaim(mc, "alias"),
 		ActivationID:  stringClaim(mc, "aid"),
 		ProjectID:     stringClaim(mc, "pid"),
 		MachineIDHash: stringClaim(mc, "mid"),

@@ -32,6 +32,11 @@ func ValidateKey(key string, luhnLen int) bool {
 	return providedLuhn == expectedLuhn
 }
 
+// SanitizeKey uppercases, strips separators, and folds the ambiguous
+// characters O/I/L to their native-alphabet look-alikes 0/1/1. This is a
+// human-typo correction specific to the native key alphabet (which
+// deliberately excludes O/I/L) — use it only where the value is expected
+// to be a native-format key. Use NormalizeKey for anything else.
 func SanitizeKey(input string) string {
 	s := strings.ToUpper(input)
 	s = strings.ReplaceAll(s, "-", "")
@@ -41,5 +46,16 @@ func SanitizeKey(input string) string {
 	s = strings.ReplaceAll(s, "I", "1")
 	s = strings.ReplaceAll(s, "L", "1")
 
+	return s
+}
+
+// NormalizeKey uppercases and strips separators, with no other
+// transformation. Unlike SanitizeKey, it never assumes the input is in the
+// native key alphabet, so it's safe to use on any license key string
+// regardless of which system minted it.
+func NormalizeKey(input string) string {
+	s := strings.ToUpper(input)
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, " ", "")
 	return s
 }

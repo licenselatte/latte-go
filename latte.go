@@ -104,9 +104,10 @@ func (s *SDK) Activate(key string) (*License, error) {
 }
 
 // ActivateWithContext is the context-aware version of Activate.
-func (s *SDK) ActivateWithContext(ctx context.Context, key string) (*License, error) {
-	key = crypto.SanitizeKey(key)
-	if err := s.validateLicenseKey(key); err != nil {
+func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License, error) {
+	key := crypto.SanitizeKey(rawKey)
+	normalized := crypto.NormalizeKey(rawKey)
+	if err := s.validateLicenseKey(normalized); err != nil {
 		return nil, err
 	}
 
@@ -119,7 +120,15 @@ func (s *SDK) ActivateWithContext(ctx context.Context, key string) (*License, er
 					go s.silentRenew(lic)
 				}
 
-				if lic.Key == key && lic.IsValid() {
+				// lic.Key is the JWT sub claim: for a native-format key
+				// that's the same string activated with, but for a
+				// license resolved via a legacy-key alias it's the
+				// newly minted native key instead — the customer's app
+				// keeps passing the original legacy string forever, so
+				// that case is matched against lic.Alias (the JWT's
+				// alias claim) instead.
+				matches := lic.Key == key || (lic.Alias != "" && lic.Alias == normalized)
+				if matches && lic.IsValid() {
 					return domainToPublic(lic), nil
 				}
 			}
@@ -127,7 +136,7 @@ func (s *SDK) ActivateWithContext(ctx context.Context, key string) (*License, er
 	}
 
 	// Cache miss or expired: activate via network.
-	raw, chain, err := s.activator.Activate(ctx, key, s.machineID)
+	raw, chain, err := s.activator.Activate(ctx, normalized, s.machineID)
 	if err != nil {
 		return nil, mapNetworkError(err)
 	}
@@ -250,19 +259,14 @@ func (s *SDK) silentRenew(lic *domain.License) {
 	_ = s.store.SaveToken(raw, chain)
 }
 
-func (s *SDK) validateLicenseKey(sanitized string) error {
-	// A raw license key is: 6-char short_id + 22 random + 2 checksum = 30 chars.
-	if len(sanitized) != 30 {
-		return ErrInvalidKey
-	}
-
-	// Verify the short_id prefix matches this project.
-	if sanitized[:6] != s.appKey[:6] {
-		return ErrInvalidKey
-	}
-
-	// Verify checksum on the non-prefix part.
-	if !crypto.ValidateKey(sanitized[6:], 2) {
+// validateLicenseKey is a minimal local sanity check, not a format check:
+// a license key may be native or a legacy-system alias (see the
+// legacy-key-migration feature in license-latte-api,
+// internal/usecase/api/activate_license.go), and only the server knows
+// which. It exists only to reject obviously-not-a-key input (empty, or
+// implausibly long) without a network round trip.
+func (s *SDK) validateLicenseKey(normalized string) error {
+	if len(normalized) == 0 || len(normalized) > 256 {
 		return ErrInvalidKey
 	}
 	return nil

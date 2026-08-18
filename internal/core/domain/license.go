@@ -10,6 +10,15 @@ type License struct {
 	// Key is the raw license key (no hyphens), as sent to and from the API.
 	Key string
 
+	// Alias is the legacy-system key string this license was resolved
+	// from, when it was minted via a legacy-key migration alias rather
+	// than activated by its own native key. Empty for a natively-keyed
+	// license. Internal only — used to recognize a cached token on a
+	// later Activate() call passing the same legacy key, since Key above
+	// will be the newly minted native key instead. See the JWT's "alias"
+	// claim.
+	Alias string
+
 	// ActivationID is the server-assigned UUID for this device's activation slot.
 	// Required for token renewal.
 	ActivationID string
