@@ -26,6 +26,7 @@ Embed license enforcement directly into your Go application in a few lines of co
 - [Token storage](#token-storage)
 - [Background renewal](#background-renewal)
 - [Custom metadata](#custom-metadata)
+- [Entitlements](#entitlements)
 - [Environments](#environments)
 - [Testing](#testing)
 
@@ -175,6 +176,7 @@ type License struct {
     InGracePeriod bool              // true → device has been offline a long time; reconnect soon
     LicenseType   string            // "perpetual_fixed" | "perpetual" | "expiring"
     Claims        map[string]any    // full JWT payload (includes custom metadata fields)
+    Entitlements  map[string]any    // typed feature map: bool | int64 (see Entitlements)
 }
 ```
 
@@ -290,6 +292,82 @@ if tier, ok := lic.Claims["tier"].(string); ok {
 ```
 
 Claims are signed by the server, they cannot be tampered with by the client.
+
+---
+
+## Entitlements
+
+Entitlements are the typed answers a seller signed into a licence about what
+their customer bought. Two questions, and only two: *may this customer do X*
+(a boolean) and *how many Y do they get* (an integer).
+
+```go
+lic, _ := sdk.Activate(key)
+
+if lic.Can("export_pdf") {
+    enablePDFExport()
+}
+
+if n, ok := lic.Limit("max_projects"); ok && n != latte.Unlimited && used >= n {
+    return errProjectLimitReached
+}
+```
+
+You set the values on a policy and override them per licence in the
+dashboard; the server resolves the two and signs the result into the
+activation token, so `Can` and `Limit` answer offline with no network call.
+
+`latte.Unlimited` is `-1`. `Limit` returns it as-is — compare against the
+constant rather than testing for a negative number.
+
+### The rules
+
+| | |
+|---|---|
+| **Absence denies.** | An unset key is `Can() == false`, `Limit() == (0, false)`. |
+| **No coercion.** | `Can` on an integer is false even when it is non-zero. `Limit` on a boolean misses rather than returning 1 or 0. |
+| **Keys are byte-exact.** | No case folding, no trimming. |
+| **A bad value is dropped, never fatal.** | If a value reaches the token that is neither a boolean nor an integer, that one entry vanishes and the licence stays valid. |
+
+### Rolling this out without switching your own features off
+
+Absence denies, and that has a consequence worth reading twice: **a token
+issued before you set any entitlements answers `false` to everything.** Ship
+`if !lic.Can("export_pdf") { hide() }` and every customer still holding a
+cached token from before the change loses PDF export until they renew.
+
+`HasEntitlements` exists for exactly this, and it is not a convenience
+accessor:
+
+```go
+var enabled bool
+if lic.HasEntitlements() {
+    enabled = lic.Can("export_pdf")
+} else {
+    enabled = legacyBehaviour()   // this token predates entitlements
+}
+```
+
+The published order is: set the values in the dashboard first, wait one
+grace window for the installed base to renew, then ship the release that
+reads them behind `HasEntitlements`, and drop the fallback once the base has
+turned over.
+
+`HasEntitlements` reports whether the claim was **present**, including when
+it is empty — which is why it is not a `len(lic.Entitlements) > 0` check.
+
+### Entitlements are not metadata
+
+`Entitlements` and `Claims["pmd"]` are separate namespaces and never merge.
+Metadata is arbitrary display data, filtered per field in the dashboard, and
+untyped; entitlements are booleans and integers, unfiltered, and exist
+precisely to be read on the customer's machine. The same key may appear in
+both meaning different things.
+
+Entitlements are a distribution mechanism for a signed answer, not a
+tamper-proofing one — a determined user can patch this check out of your
+binary as easily as any other. If real revenue depends on a feature,
+re-validate it server-side.
 
 ---
 

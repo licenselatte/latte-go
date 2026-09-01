@@ -92,5 +92,6 @@ func domainToPublic(d *domain.License) *License {
 		GracePeriod:   d.GracePeriod,
 		InGracePeriod: inGracePeriod,
 		Metadata:      publicMetadata,
+		Entitlements:  decodeEntitlements(d.Claims),
 	}
 }
