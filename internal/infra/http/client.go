@@ -16,17 +16,25 @@ import (
 type httpClient struct {
 	endpoint   string
 	projectKey string
+	sdk        SDKInfo
 	http       *http.Client
 }
 
+// SDKInfo identifies this SDK to the API, sent as "sdk" in every request body.
+type SDKInfo struct {
+	Language string `json:"language"`
+	Version  string `json:"version"`
+}
+
 // NewHttpClient returns an Activator + Renewer backed by the LicenseLatte HTTP API.
-func NewHttpClient(endpoint string, projectKey string) interface {
+func NewHttpClient(endpoint string, projectKey string, sdk SDKInfo) interface {
 	ports.Activator
 	ports.Renewer
 } {
 	return &httpClient{
 		endpoint:   endpoint,
 		projectKey: projectKey,
+		sdk:        sdk,
 		http:       &http.Client{},
 	}
 }
@@ -34,9 +42,10 @@ func NewHttpClient(endpoint string, projectKey string) interface {
 // --- Activate ---
 
 type activateRequest struct {
-	ProjectKey    string `json:"project_key"`
-	LicenseKey    string `json:"license_key"`
-	MachineIDHash string `json:"machine_id"`
+	ProjectKey    string  `json:"project_key"`
+	LicenseKey    string  `json:"license_key"`
+	MachineIDHash string  `json:"machine_id"`
+	SDK           SDKInfo `json:"sdk"`
 }
 
 func (c *httpClient) Activate(ctx context.Context, licenseKey, machineID string) (string, *domain.CertChain, error) {
@@ -44,6 +53,7 @@ func (c *httpClient) Activate(ctx context.Context, licenseKey, machineID string)
 		ProjectKey:    c.projectKey,
 		LicenseKey:    licenseKey,
 		MachineIDHash: machineID,
+		SDK:           c.sdk,
 	})
 
 	return c.post(ctx, "/v1/activate", body)
@@ -52,9 +62,10 @@ func (c *httpClient) Activate(ctx context.Context, licenseKey, machineID string)
 // --- Renew ---
 
 type renewRequest struct {
-	ActivationID  string `json:"activation_id"`
-	LicenseKey    string `json:"license_key"`
-	MachineIDHash string `json:"machine_id"`
+	ActivationID  string  `json:"activation_id"`
+	LicenseKey    string  `json:"license_key"`
+	MachineIDHash string  `json:"machine_id"`
+	SDK           SDKInfo `json:"sdk"`
 }
 
 func (c *httpClient) Renew(ctx context.Context, activationID, licenseKey, machineID string) (string, *domain.CertChain, error) {
@@ -62,6 +73,7 @@ func (c *httpClient) Renew(ctx context.Context, activationID, licenseKey, machin
 		ActivationID:  activationID,
 		LicenseKey:    licenseKey,
 		MachineIDHash: machineID,
+		SDK:           c.sdk,
 	})
 
 	return c.post(ctx, "/v1/renew", body)

@@ -15,7 +15,6 @@ package latte
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -47,7 +46,16 @@ type SDK struct {
 	renewMu          sync.Mutex
 	lastRenewAttempt time.Time
 	renewInFlight    bool
-	pubKey           ed25519.PublicKey
+	masterPubs       []ed25519.PublicKey
+}
+
+// newClient returns the API client, identifying this SDK's language and
+// version on every request.
+func newClient(apiURL, appID string) interface {
+	ports.Activator
+	ports.Renewer
+} {
+	return latthttp.NewHttpClient(apiURL, appID, latthttp.SDKInfo{Language: sdkLanguage, Version: sdkVersion})
 }
 
 // New creates a new SDK instance. Returns an error if AppID is invalid or
@@ -68,9 +76,7 @@ func New(config *Config) (*SDK, error) {
 		apiURL = localURL
 	}
 
-	client := latthttp.NewHttpClient(apiURL, config.AppID)
-
-	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
+	client := newClient(apiURL, config.AppID)
 
 	storePath, err := resolveStoragePath(appKey)
 	if err != nil {
@@ -83,13 +89,13 @@ func New(config *Config) (*SDK, error) {
 	}
 
 	return &SDK{
-		appID:     config.AppID,
-		appKey:    appKey,
-		activator: client,
-		renewer:   client,
-		store:     storage.NewFileStorage(storePath),
-		machineID: machineID,
-		pubKey:    pubKeyBytes,
+		appID:      config.AppID,
+		appKey:     appKey,
+		activator:  client,
+		renewer:    client,
+		store:      storage.NewFileStorage(storePath),
+		machineID:  machineID,
+		masterPubs: masterPublicKeys(),
 	}, nil
 }
 
@@ -113,7 +119,7 @@ func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License,
 
 	// Fast path: valid cached token.
 	if raw, chain, err := s.store.LoadToken(); err == nil {
-		if lic, err := verify.VerifyActivation(s.pubKey, raw, chain); err == nil {
+		if lic, err := verify.VerifyActivation(s.masterPubs, raw, chain); err == nil {
 			if err := validate.Validate(lic, s.machineID); err == nil {
 				if s.shouldTryRenew(lic) {
 					// Renew in the background so it's fresh next time.
@@ -141,7 +147,7 @@ func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License,
 		return nil, mapNetworkError(err)
 	}
 
-	lic, err := verify.VerifyActivation(s.pubKey, raw, chain)
+	lic, err := verify.VerifyActivation(s.masterPubs, raw, chain)
 	if err != nil {
 		return nil, fmt.Errorf("licenselatte: server returned invalid token: %w", err)
 	}
@@ -167,7 +173,7 @@ func (s *SDK) Check() (*License, error) {
 		return nil, ErrNotActivated
 	}
 
-	lic, err := verify.VerifyActivation(s.pubKey, raw, chain)
+	lic, err := verify.VerifyActivation(s.masterPubs, raw, chain)
 	if err != nil {
 		if errors.Is(err, ports.ErrLicenseInactiveOrExpired) {
 			return nil, ErrLicenseExpired
@@ -248,7 +254,7 @@ func (s *SDK) silentRenew(lic *domain.License) {
 		return
 	}
 
-	if _, err := verify.VerifyActivation(s.pubKey, raw, chain); err != nil {
+	if _, err := verify.VerifyActivation(s.masterPubs, raw, chain); err != nil {
 		return
 	}
 

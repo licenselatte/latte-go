@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 
@@ -26,7 +27,7 @@ const (
 
 func main() {
 	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
-	client := latthttp.NewHttpClient("http://localhost:8080", appID)
+	client := latthttp.NewHttpClient("http://localhost:8080", appID, latthttp.SDKInfo{Language: "go", Version: "dev"})
 
 	key := crypto.SanitizeKey(licenseKey)
 	fmt.Printf("Sanitized key: %s\n\n", key)
@@ -40,7 +41,7 @@ func main() {
 	fmt.Printf("Token: %s\n\n", token)
 
 	fmt.Println("→ Validating…")
-	lic, err := verify.VerifyActivation(pubKeyBytes, token, chain)
+	lic, err := verify.VerifyActivation([]ed25519.PublicKey{pubKeyBytes}, token, chain)
 	if err != nil {
 		fmt.Printf("Verification error: %v\n", err)
 		return
@@ -63,7 +64,7 @@ func main() {
 		fmt.Printf("Renew error: %v\n", err)
 		return
 	}
-	lic2, err := verify.VerifyActivation(pubKeyBytes, renewed, chain)
+	lic2, err := verify.VerifyActivation([]ed25519.PublicKey{pubKeyBytes}, renewed, chain)
 	if err != nil {
 		fmt.Printf("Renew verification error: %v\n", err)
 		return

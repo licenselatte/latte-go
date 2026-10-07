@@ -15,17 +15,31 @@ const (
 	maxGracePeriod = 90 * 24 * time.Hour
 )
 
-func VerifyActivation(masterPub ed25519.PublicKey, token string, chain *domain.CertChain) (*domain.License, error) {
-	return VerifyActivationAt(masterPub, token, chain, time.Now())
+// VerifyActivation verifies the chain against masterPubs, the trusted root
+// keys: the submaster cert must be signed by any one of them.
+func VerifyActivation(masterPubs []ed25519.PublicKey, token string, chain *domain.CertChain) (*domain.License, error) {
+	return VerifyActivationAnyAt(masterPubs, token, chain, time.Now())
 }
 
-// VerifyActivationAt is VerifyActivation with an injectable clock, so tests
-// can replay the shared testdata/ fixtures (each pinned to a fixed instant)
-// without depending on the real wall clock. Production code should call
-// VerifyActivation; this exists purely as a test seam.
+// VerifyActivationAt is VerifyActivationAnyAt with a single root key, so tests
+// can replay the shared testdata/ fixtures (each pinned to a fixed instant and
+// carrying its own master key) without depending on the real wall clock.
+// Production code should call VerifyActivation; this exists purely as a test
+// seam.
 func VerifyActivationAt(masterPub ed25519.PublicKey, token string, chain *domain.CertChain, now time.Time) (*domain.License, error) {
-	// Step 1: Verify submaster cert (signed by master).
-	subClaims, err := llcrypto.VerifyCert(masterPub, chain.Submaster, now)
+	return VerifyActivationAnyAt([]ed25519.PublicKey{masterPub}, token, chain, now)
+}
+
+// VerifyActivationAnyAt is VerifyActivation with an injectable clock.
+func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *domain.CertChain, now time.Time) (*domain.License, error) {
+	// Step 1: Verify submaster cert (signed by any trusted master).
+	var subClaims jwt.MapClaims
+	err := fmt.Errorf("no master keys")
+	for _, masterPub := range masterPubs {
+		if subClaims, err = llcrypto.VerifyCert(masterPub, chain.Submaster, now); err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("verify: submaster cert invalid: %w", err)
 	}
