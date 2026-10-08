@@ -61,9 +61,3 @@ func masterPublicKeys() []ed25519.PublicKey {
 	}
 	return keys
 }
-
-const (
-	licenseTypePerpetualFixed = "perpetual_fixed"
-	licenseTypePerpetual      = "perpetual"
-	licenseTypeExpiring       = "expiring"
-)

@@ -35,15 +35,6 @@ func ValidateAt(license *domain.License, machineID string, now time.Time) error 
 		return fmt.Errorf("invalid license: expires_at is before issued_at")
 	}
 
-	// perpetual_fixed tokens never expire and have no grc check.
-	// The only requirement is that we haven't somehow passed year 2099.
-	if license.LicenseType == "perpetual_fixed" {
-		if now.After(license.ExpiresAt) {
-			return ports.ErrLicenseInactiveOrExpired
-		}
-		return nil
-	}
-
 	offlineDeadline := license.IssuedAt.Add(license.GracePeriod)
 
 	if now.After(license.ExpiresAt) {

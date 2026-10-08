@@ -66,18 +66,6 @@ func (v *ed25519Validator) Validate(raw string, machineID string) (*domain.Licen
 	}
 	iatTime := time.Unix(int64(iat), 0)
 
-	// perpetual_fixed tokens never expire and have no grc check.
-	// The only requirement is that we haven't somehow passed year 2099.
-	ltype, _ := claims["ltype"].(string)
-	if ltype == "perpetual_fixed" {
-		if time.Now().After(expTime) {
-			return nil, ports.ErrLicenseInactiveOrExpired
-		}
-		return buildLicense(claims, expTime, iatTime, 0), nil
-	}
-
-	// For all other license types:
-	//
 	// grc  = offline grace window in seconds from iat (last successful issuance/renewal).
 	// rule : iat + grc > exp  → collision (grace window extends past license expiry) → expired.
 	//        now > iat + grc  → offline too long, must reconnect.

@@ -26,7 +26,7 @@ type License struct {
 	// has not elapsed. The application should surface a "please reconnect" warning.
 	InGracePeriod bool
 
-	// LicenseType is "perpetual_fixed", "perpetual", or "expiring".
+	// LicenseType is "perpetual" or "expiring".
 	LicenseType string
 
 	// Metadata contains the public metadata configured for the license in the dashboard

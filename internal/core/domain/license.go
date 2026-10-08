@@ -33,14 +33,13 @@ type License struct {
 	IssuedAt time.Time
 
 	// ExpiresAt is the hard expiry from the JWT exp claim.
-	// For perpetual_fixed licenses this is year 2099.
 	ExpiresAt time.Time
 
 	// GracePeriod is the offline tolerance window after ExpiresAt.
 	// While within the grace window, the SDK continues working without a network call.
 	GracePeriod time.Duration
 
-	// LicenseType is the policy type: "perpetual_fixed", "perpetual", or "expiring".
+	// LicenseType is the policy type: "perpetual" or "expiring".
 	LicenseType string
 
 	// Claims is the full JWT payload, available for custom fields the integrator

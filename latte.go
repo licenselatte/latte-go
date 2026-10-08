@@ -200,10 +200,6 @@ func (s *SDK) shouldTryRenew(lic *domain.License) bool {
 	s.renewMu.Lock()
 	defer s.renewMu.Unlock()
 
-	if lic.LicenseType == licenseTypePerpetualFixed {
-		return false
-	}
-
 	if s.renewInFlight {
 		return false
 	}

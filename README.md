@@ -170,11 +170,11 @@ type License struct {
     ActivationID  string            // server UUID for this machine's activation slot
     ProjectID     string            // UUID of the owning project
     IssuedAt      time.Time         // when the server last issued / renewed this token
-    ExpiresAt     time.Time         // hard expiry of the license (year 2099 for perpetual_fixed)
+    ExpiresAt     time.Time         // hard expiry of the license
     MachineIDHash string            // machine fingerprint 
     GracePeriod   time.Duration     // offline tolerance window from IssuedAt
     InGracePeriod bool              // true → device has been offline a long time; reconnect soon
-    LicenseType   string            // "perpetual_fixed" | "perpetual" | "expiring"
+    LicenseType   string            // "perpetual" | "expiring"
     Claims        map[string]any    // full JWT payload (includes custom metadata fields)
     Entitlements  map[string]any    // typed feature map: bool | int64 (see Entitlements)
 }
@@ -188,13 +188,12 @@ type License struct {
 
 | Type | Expiry | Renewal | Revocable |
 |---|---|---|---|
-| `perpetual_fixed` | Never (year 2099) | Never needed | No |
 | `perpetual` | Never | Periodic (background) | Yes |
 | `expiring` | Set by policy | Periodic (background) | Yes |
 
-**`perpetual_fixed`** tokens are irrevocable one-time activations. The server signs a token that expires in 2099 and the SDK never contacts the API again after the first activation. There is no grace period.
+Both types use a rolling-renewal model. The SDK renews the cached token in the background every 5–60 minutes. The grace period gives the device a buffer to work offline if the renewal fails.
 
-**`perpetual`** and **`expiring`** licenses use a rolling-renewal model. The SDK renews the cached token in the background every 5–60 minutes. The grace period gives the device a buffer to work offline if the renewal fails.
+The SDK validates and renews every token the same way whatever its `LicenseType`, so nothing else is required of your code: the field is informational.
 
 ---
 
@@ -274,8 +273,6 @@ Each project has its own file (keyed by the 32-char project key segment), so mul
 When `Activate` or `Check` returns a valid cached token, the SDK fires a background goroutine that calls `POST /v1/renew` and overwrites the stored token with the fresh one.
 
 Renewal happens between 5 and 60 minutes after the last issuance (randomised to spread server load). Renewal errors are silently ignored, the existing token remains valid until its grace period elapses.
-
-`perpetual_fixed` licenses skip renewal entirely: the token is permanent and the server is never contacted after the initial activation.
 
 ---
 
