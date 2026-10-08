@@ -15,6 +15,11 @@ const (
 	maxGracePeriod = 90 * 24 * time.Hour
 )
 
+// noExpiry is ExpiresAt for a licence with no end date. It matches the exp a
+// grc-format perpetual token carries, so a perpetual licence reports the same
+// ExpiresAt in either token format.
+var noExpiry = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // VerifyActivation verifies the chain against masterPubs, the trusted root
 // keys: the submaster cert must be signed by any one of them.
 func VerifyActivation(masterPubs []ed25519.PublicKey, token string, chain *domain.CertChain) (*domain.License, error) {
@@ -81,8 +86,9 @@ func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *
 		},
 		jwt.WithIssuedAt(),
 		jwt.WithIssuer(issuer),
-		// We handle expiry ourselves; passing a large leeway effectively disables
-		// the library's exp check without losing the rest of the validation.
+		// exp is enforced by validate, which reports it as hard_expired or
+		// grace_expired depending on the format. The large leeway disables the
+		// library's exp check without losing the rest of the validation.
 		jwt.WithLeeway(100*365*24*time.Hour),
 		jwt.WithTimeFunc(func() time.Time { return now }),
 	)
@@ -106,14 +112,28 @@ func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *
 		Claims:        mc,
 	}
 
-	if grc, ok := mc["grc"].(float64); ok {
-		claims.GracePeriod = time.Duration(int64(grc)) * time.Second
-	}
 	if iat, ok := mc["iat"].(float64); ok {
 		claims.IssuedAt = time.Unix(int64(iat), 0)
 	}
-	if exp, ok := mc["exp"].(float64); ok {
-		claims.ExpiresAt = time.Unix(int64(exp), 0)
+	exp, hasExp := mc["exp"].(float64)
+	if _, ok := mc["grc"]; ok {
+		// grc format: exp is the licence's end, grc the offline window from iat.
+		grc, _ := mc["grc"].(float64)
+		claims.GracePeriod = time.Duration(int64(grc)) * time.Second
+		if hasExp {
+			claims.ExpiresAt = time.Unix(int64(exp), 0)
+		}
+	} else {
+		// lex format: exp is the offline deadline itself and lex, when
+		// present, the licence's end. Either way validate sees the offline
+		// deadline as IssuedAt+GracePeriod and the licence's end as ExpiresAt.
+		claims.ExpiresAt = noExpiry
+		if lex, ok := mc["lex"].(float64); ok {
+			claims.ExpiresAt = time.Unix(int64(lex), 0)
+		}
+		if hasExp {
+			claims.GracePeriod = time.Unix(int64(exp), 0).Sub(claims.IssuedAt)
+		}
 	}
 
 	// Cross-check: project_id in activation JWT must match project_id in project cert.

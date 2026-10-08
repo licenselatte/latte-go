@@ -11,6 +11,7 @@ import (
 
 	"github.com/licenselatte/latte-go/internal/core/domain"
 	"github.com/licenselatte/latte-go/internal/core/ports"
+	"github.com/licenselatte/latte-go/internal/infra/storage"
 	"github.com/licenselatte/latte-go/internal/infra/validate"
 	"github.com/licenselatte/latte-go/internal/infra/verify"
 )
@@ -199,5 +200,45 @@ func assertEntitlements(t *testing.T, lic *License, f fixture) {
 	}
 	if _, ok := lic.Limit("no_such_entitlement_key"); ok {
 		t.Error("Limit() on an unset key reported present; absence must deny")
+	}
+}
+
+// TestFixturesCacheRoundTrip stores every accepted fixture the way Activate
+// caches a token and checks the licence read back from disk is the one the
+// token produced directly, in both the grc and the lex format.
+func TestFixturesCacheRoundTrip(t *testing.T) {
+	for _, f := range loadFixtures(t) {
+		if f.Expect != "accept" {
+			continue
+		}
+		f := f
+		t.Run(f.Name, func(t *testing.T) {
+			masterPub, _ := hex.DecodeString(f.MasterPublicKeyHex)
+			chain := &domain.CertChain{Submaster: f.Chain.Submaster, Project: f.Chain.Project, Daily: f.Chain.Daily}
+			want, err := verify.VerifyActivationAt(masterPub, f.Token, chain, f.Now)
+			if err != nil {
+				t.Fatalf("verify: %v", err)
+			}
+
+			store := storage.NewFileStorage(filepath.Join(t.TempDir(), "cache.latte"))
+			if err := store.SaveToken(f.Token, chain); err != nil {
+				t.Fatalf("save: %v", err)
+			}
+			raw, loaded, err := store.LoadToken()
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			got, err := verify.VerifyActivationAt(masterPub, raw, loaded, f.Now)
+			if err != nil {
+				t.Fatalf("verify cached: %v", err)
+			}
+			if err := validate.ValidateAt(got, f.MachineID, f.Now); err != nil {
+				t.Fatalf("validate cached: %v", err)
+			}
+			if !got.ExpiresAt.Equal(want.ExpiresAt) || got.GracePeriod != want.GracePeriod || !got.IssuedAt.Equal(want.IssuedAt) {
+				t.Fatalf("cached licence (exp %s, grace %s, iat %s) differs from direct (exp %s, grace %s, iat %s)",
+					got.ExpiresAt, got.GracePeriod, got.IssuedAt, want.ExpiresAt, want.GracePeriod, want.IssuedAt)
+			}
+		})
 	}
 }

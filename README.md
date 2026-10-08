@@ -170,7 +170,7 @@ type License struct {
     ActivationID  string            // server UUID for this machine's activation slot
     ProjectID     string            // UUID of the owning project
     IssuedAt      time.Time         // when the server last issued / renewed this token
-    ExpiresAt     time.Time         // hard expiry of the license
+    ExpiresAt     time.Time         // end of the license (2099-01-01 for one that never ends)
     MachineIDHash string            // machine fingerprint 
     GracePeriod   time.Duration     // offline tolerance window from IssuedAt
     InGracePeriod bool              // true → device has been offline a long time; reconnect soon
@@ -208,10 +208,21 @@ IssuedAt ───────────────────────�
                   ^ offline window
 ```
 
-Two special cases result in an expired token:
+Two cases result in an expired token, checked in this order:
 
-1. **Collision**: `IssuedAt + GracePeriod > ExpiresAt`: the grace window extends past the license hard expiry. The SDK treats this as expired.
-2. **Offline too long**: `now > IssuedAt + GracePeriod`: the device has been offline longer than the grace window allows. The user must reconnect to receive a fresh token.
+1. **License ended**: `now > ExpiresAt`. The license itself is over; reconnecting does not help unless it is renewed or extended.
+2. **Offline too long**: `now > IssuedAt + GracePeriod`. The device has been offline longer than the grace window allows. The user must reconnect to receive a fresh token.
+
+### Token claims
+
+The SDK accepts two token formats and tells them apart only by whether the token carries a `grc` claim:
+
+| Format | `exp` | `ExpiresAt` | `GracePeriod` |
+|---|---|---|---|
+| with `grc` | end of the license (2099 for a perpetual one) | `exp` | `grc` seconds |
+| without `grc` | the offline deadline, capped at the license's end | `lex` when present, otherwise 2099-01-01 | `exp - iat` |
+
+Both formats reach the same two rules above, so `ExpiresAt` and `GracePeriod` mean the same thing whichever one the server sent. The JWT library never rejects a token for its `exp`: the SDK checks it itself, so an ended license and a device offline too long are reported apart.
 
 The `InGracePeriod` field on `*License` lets you show a "please reconnect" banner before the deadline is reached.
 

@@ -32,10 +32,11 @@ type License struct {
 	// IssuedAt is the timestamp when the server issued the license.
 	IssuedAt time.Time
 
-	// ExpiresAt is the hard expiry from the JWT exp claim.
+	// ExpiresAt is the end of the license: the exp claim in a token that
+	// carries grc, the lex claim in one that does not.
 	ExpiresAt time.Time
 
-	// GracePeriod is the offline tolerance window after ExpiresAt.
+	// GracePeriod is the offline tolerance window measured from IssuedAt.
 	// While within the grace window, the SDK continues working without a network call.
 	GracePeriod time.Duration
 

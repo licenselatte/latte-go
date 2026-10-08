@@ -16,10 +16,10 @@ type License struct {
 	// IssuedAt is the timestamp when the server issued the license.
 	IssuedAt time.Time
 
-	// ExpiresAt is the hard expiry of the current token (far-future for perpetual).
+	// ExpiresAt is the end of the license (2099-01-01 for one that never ends).
 	ExpiresAt time.Time
 
-	// GracePeriod is the offline tolerance window after ExpiresAt.
+	// GracePeriod is the offline tolerance window measured from IssuedAt.
 	GracePeriod time.Duration
 
 	// InGracePeriod is true when the token has expired but the grace window
