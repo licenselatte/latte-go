@@ -33,6 +33,20 @@ import (
 type Config struct {
 	// AppID is the project key shown in the LicenseLatte dashboard (pk_live_… / pk_test_… / pk_local_…).
 	AppID string
+
+	// MachineID optionally replaces the operating system's machine ID as the
+	// identity of this install. When empty, the SDK reads the OS machine ID.
+	// Either way the raw value never leaves the machine: the SDK sends
+	// lowercase hex HMAC-SHA256(key = raw ID, message = "licenselatte_" + AppID),
+	// with a supplied value used byte for byte, without trimming.
+	//
+	// Set it when the OS machine ID does not identify what you want to count
+	// as one seat: containers that share their image's /etc/machine-id or
+	// have none, cloned VMs that share one ID, apps that want a seat per user
+	// rather than per machine, and tests. Changing it on an install that is
+	// already activated makes that install a new machine, which takes a new
+	// seat.
+	MachineID string
 }
 
 // SDK is the main entry point. Create one instance per application.
@@ -83,10 +97,14 @@ func New(config *Config) (*SDK, error) {
 		return nil, fmt.Errorf("%w: %w", ErrStorageInitFailed, err)
 	}
 
-	machineID, err := machineid.ProtectedID(fmt.Sprintf("licenselatte_" + config.AppID))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMachineIDFailed, err)
+	rawMachineID := config.MachineID
+	if rawMachineID == "" {
+		rawMachineID, err = machineid.ID()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMachineIDFailed, err)
+		}
 	}
+	machineID := protectMachineID(rawMachineID, config.AppID)
 
 	return &SDK{
 		appID:      config.AppID,

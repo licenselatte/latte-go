@@ -1,6 +1,9 @@
 package latte
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +15,15 @@ import (
 	"github.com/licenselatte/latte-go/internal/core/ports"
 	"github.com/licenselatte/latte-go/internal/infra/crypto"
 )
+
+// protectMachineID returns the machine_id sent to the API: lowercase hex
+// HMAC-SHA256 keyed with the raw machine ID over "licenselatte_" + appID.
+// This is the function machineid.ProtectedID applies to the OS machine ID.
+func protectMachineID(rawID, appID string) string {
+	mac := hmac.New(sha256.New, []byte(rawID))
+	mac.Write([]byte("licenselatte_" + appID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 func parseAppID(appID string) (appEnv, string, error) {
 	parts := strings.Split(appID, "_")

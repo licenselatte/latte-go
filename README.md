@@ -111,10 +111,40 @@ type Config struct {
     // Format: pk_{env}_{32-char key}
     // Environments: live, test
     AppID string
+
+    // MachineID optionally replaces the OS machine ID as this install's
+    // identity. Empty means the OS machine ID is used.
+    MachineID string
 }
 ```
 
 The `AppID` encodes the environment and is validated on `New`. A checksum is embedded in the key itself, a typo returns `ErrInvalidAppID` or `ErrInvalidAppIDChecksum` at startup, not at runtime.
+
+### Machine ID
+
+The SDK never sends a raw machine ID. What reaches the API (and comes back signed into the token as `mid`) is
+
+```
+lowercase hex HMAC-SHA256(key = raw machine ID, message = "licenselatte_" + AppID)
+```
+
+By default the raw machine ID is the operating system's, read by [`denisbrodbeck/machineid`](https://github.com/denisbrodbeck/machineid). Set `MachineID` to supply your own instead; it is used byte for byte as the HMAC key, with no trimming, so the hash is the same function applied to a different input. Every LicenseLatte SDK hashes the same way, pinned by `machine_id.json` in the shared test vectors.
+
+Set `MachineID` when the OS machine ID does not identify what you want to count as one seat:
+
+- containers that share their image's `/etc/machine-id`, or have none
+- cloned VMs that share one machine ID
+- apps that want a seat per user rather than per machine (pass a stable user identifier)
+- tests
+
+Changing `MachineID` on an install that is already activated makes it a new machine: the cached token no longer matches, and the next activation takes a new seat.
+
+```go
+sdk, err := latte.New(&latte.Config{
+    AppID:     "pk_live_...",
+    MachineID: os.Getenv("MY_APP_INSTANCE_ID"),
+})
+```
 
 ---
 
