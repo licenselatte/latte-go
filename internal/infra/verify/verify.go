@@ -59,7 +59,10 @@ func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *
 	}
 
 	// Step 3: Verify daily cert (signed by project key).
-	dailyClaims, err := llcrypto.VerifyCert(projectPub, chain.Daily, now)
+	// The daily cert is not checked against now: it expires the morning after
+	// it is issued, and the token it signed has to verify offline for its whole
+	// grace period. Its window bounds the token's iat instead, below.
+	dailyClaims, err := llcrypto.VerifyCertIgnoringExpiry(projectPub, chain.Daily, now)
 	if err != nil {
 		return nil, fmt.Errorf("verify: daily cert invalid: %w", err)
 	}
@@ -135,9 +138,10 @@ func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *
 	}
 	dailyExpTime := time.Unix(int64(dailyExp), 0)
 
-	// Cross-check: activation JWT exp must be before daily cert exp.
+	// Cross-check: activation JWT iat must be before daily cert exp, so a daily
+	// key cannot sign tokens dated after its own day.
 	if claims.IssuedAt.After(dailyExpTime) {
-		return nil, fmt.Errorf("verify: activation JWT exp (%s) is after daily cert exp (%s)", claims.ExpiresAt, dailyExpTime)
+		return nil, fmt.Errorf("verify: activation JWT iat (%s) is after daily cert exp (%s)", claims.IssuedAt, dailyExpTime)
 	}
 
 	if claims.GracePeriod > maxGracePeriod {
