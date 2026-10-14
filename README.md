@@ -213,7 +213,7 @@ Releases this machine's seat so the licence can be activated on another machine:
 
 The activation id and licence key come from the cached token, so `Deactivate` returns `ErrNotActivated` when there is none. A machine that is lost, dead or wiped cannot call this; its seat is released from the seller's customer portal instead.
 
-On plans with the deactivation policy engine the seller may limit releases. A refusal is a `*DeactivationBlockedError` (matching `ErrDeactivationBlocked`) whose `Message` is written for the user and whose `AvailableAt` says when to try again. The seller may also hold the freed seat until this machine's last token has expired, which `SeatFreeAt` reports.
+Releases are limited on every plan: a fixed number per licence per year, or on plans with the deactivation policy engine the seller's cooldown and yearly cap. A refusal is a `*DeactivationBlockedError` (matching `ErrDeactivationBlocked`) whose `Message` is written for the user and whose `AvailableAt` says when to try again. The seller may also hold the freed seat until this machine's last token has expired, which `SeatFreeAt` reports.
 
 ```go
 res, err := sdk.Deactivate()
