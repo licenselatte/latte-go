@@ -1,6 +1,9 @@
 package latte
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Sentinel errors returned by Activate, Check, and Renew.
 var (
@@ -21,7 +24,28 @@ var (
 
 	// ErrInvalidProjectKey is returned when the provided project key is invalid, this is a config error.
 	ErrInvalidProjectKey = errors.New("licenselatte: invalid project key")
+
+	// ErrDeactivationBlocked is matched by the *DeactivationBlockedError
+	// Deactivate returns when the seller's deactivation policy refuses it.
+	ErrDeactivationBlocked = errors.New("licenselatte: deactivation blocked")
 )
+
+// DeactivationBlockedError is Deactivate refused by the seller's deactivation
+// policy: a machine on this licence was released too recently, or the licence
+// has used its releases for the year. Nothing was released and the cached
+// token is kept.
+type DeactivationBlockedError struct {
+	// Reason is "deactivation_cooldown" or "deactivation_limit_reached".
+	Reason string
+	// AvailableAt is when a release becomes possible, nil when not known.
+	AvailableAt *time.Time
+	// Message explains the refusal and is written to be shown to the user.
+	Message string
+}
+
+func (e *DeactivationBlockedError) Error() string { return "licenselatte: " + e.Message }
+
+func (e *DeactivationBlockedError) Is(target error) bool { return target == ErrDeactivationBlocked }
 
 // Sentinel errors returned by the internal app id parser. They are config errors.
 var (

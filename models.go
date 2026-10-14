@@ -1,6 +1,10 @@
 package latte
 
-import "time"
+import (
+	"time"
+
+	"github.com/licenselatte/latte-go/internal/core/domain"
+)
 
 // License is a validated, active license returned by Activate and Check.
 type License struct {
@@ -83,3 +87,17 @@ func (l *License) Limit(key string) (int64, bool) {
 func (l *License) HasEntitlements() bool {
 	return l.Entitlements != nil
 }
+
+// DeactivateResult is what Deactivate reports.
+type DeactivateResult struct {
+	// Released is false when the machine was already released, on an earlier
+	// call or by the seller. Both outcomes are success.
+	Released bool
+	// SeatFreeAt is when the freed seat can be used by another machine, set
+	// when the seller's policy holds it until this machine's last token has
+	// expired. Nil means the seat is free now.
+	SeatFreeAt *time.Time
+}
+
+// Machine is one machine holding a seat on the licence, as Machines lists it.
+type Machine = domain.Machine

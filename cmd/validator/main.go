@@ -27,7 +27,7 @@ const (
 
 func main() {
 	pubKeyBytes, _ := hex.DecodeString(publicKeyHex)
-	client := latthttp.NewHttpClient("http://localhost:8080", appID, latthttp.SDKInfo{Language: "go", Version: "dev"})
+	client := latthttp.NewHttpClient("http://localhost:8080", appID, latthttp.SDKInfo{Language: "go", Version: "dev"}, "")
 
 	key := crypto.SanitizeKey(licenseKey)
 	fmt.Printf("Sanitized key: %s\n\n", key)

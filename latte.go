@@ -17,10 +17,12 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/denisbrodbeck/machineid"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/licenselatte/latte-go/internal/core/domain"
 	"github.com/licenselatte/latte-go/internal/core/ports"
 	"github.com/licenselatte/latte-go/internal/infra/crypto"
@@ -47,6 +49,15 @@ type Config struct {
 	// already activated makes that install a new machine, which takes a new
 	// seat.
 	MachineID string
+
+	// MachineName is the name this machine is given when it activates, shown
+	// to the customer in Machines and the portal and to you in the dashboard.
+	// When empty, the SDK sends the operating system's hostname. A name the
+	// customer sets later with RenameMachine is kept on re-activation.
+	MachineName string
+
+	// NoMachineName sends no name on activation, hostname included.
+	NoMachineName bool
 }
 
 // SDK is the main entry point. Create one instance per application.
@@ -55,6 +66,7 @@ type SDK struct {
 	appKey           string // 32-char portion after "pk_{env}_"
 	activator        ports.Activator
 	renewer          ports.Renewer
+	machines         ports.MachineManager
 	store            ports.Storage
 	machineID        string
 	renewMu          sync.Mutex
@@ -65,11 +77,12 @@ type SDK struct {
 
 // newClient returns the API client, identifying this SDK's language and
 // version on every request.
-func newClient(apiURL, appID string) interface {
+func newClient(apiURL, appID, machineName string) interface {
 	ports.Activator
 	ports.Renewer
+	ports.MachineManager
 } {
-	return latthttp.NewHttpClient(apiURL, appID, latthttp.SDKInfo{Language: sdkLanguage, Version: sdkVersion})
+	return latthttp.NewHttpClient(apiURL, appID, latthttp.SDKInfo{Language: sdkLanguage, Version: sdkVersion}, machineName)
 }
 
 // New creates a new SDK instance. Returns an error if AppID is invalid or
@@ -90,7 +103,14 @@ func New(config *Config) (*SDK, error) {
 		apiURL = localURL
 	}
 
-	client := newClient(apiURL, config.AppID)
+	machineName := config.MachineName
+	if config.NoMachineName {
+		machineName = ""
+	} else if machineName == "" {
+		// The name is a courtesy, so a hostname the OS will not give is no name.
+		machineName, _ = os.Hostname()
+	}
+	client := newClient(apiURL, config.AppID, machineName)
 
 	storePath, err := resolveStoragePath(appKey)
 	if err != nil {
@@ -111,6 +131,7 @@ func New(config *Config) (*SDK, error) {
 		appKey:     appKey,
 		activator:  client,
 		renewer:    client,
+		machines:   client,
 		store:      storage.NewFileStorage(storePath),
 		machineID:  machineID,
 		masterPubs: masterPublicKeys(),
@@ -261,7 +282,7 @@ func (s *SDK) silentRenew(lic *domain.License) {
 	if err != nil {
 		var licenseError *ports.InvalidLicenseError
 		// Check if errors is of type invalid license error
-		if errors.As(err, &licenseError) {
+		if errors.As(err, &licenseError) && s.holdsActivation(lic.ActivationID) {
 			// If invalid, delete it from the store
 			_ = s.store.SaveToken("", nil)
 		}
@@ -276,7 +297,112 @@ func (s *SDK) silentRenew(lic *domain.License) {
 		return
 	}
 
-	_ = s.store.SaveToken(raw, chain)
+	if s.holdsActivation(lic.ActivationID) {
+		_ = s.store.SaveToken(raw, chain)
+	}
+}
+
+// holdsActivation reports whether the cached token still belongs to
+// activationID. A renewal checks it before touching the cache, under renewMu,
+// so one that outlives a Deactivate (and a fresh Activate after it) can
+// neither write the released activation back nor wipe the new one.
+func (s *SDK) holdsActivation(activationID string) bool {
+	cached, _, err := s.cachedCredentials()
+	return err == nil && cached == activationID
+}
+
+// Deactivate releases this machine's seat so the licence can be activated on
+// another machine. It needs the network: the server releases the seat first,
+// and only once it has answered does the SDK delete the cached token, after
+// which Check returns ErrNotActivated until the next Activate. When the call
+// fails, the token is kept and the call can be retried; a machine that is lost
+// or dead is released from the seller's customer portal instead.
+//
+// A release that already happened, on this call or an earlier one, is
+// success. When the seller's policy refuses the release, the error is a
+// *DeactivationBlockedError, which matches ErrDeactivationBlocked.
+func (s *SDK) Deactivate() (*DeactivateResult, error) {
+	return s.DeactivateWithContext(context.Background())
+}
+
+// DeactivateWithContext is the context-aware version of Deactivate.
+func (s *SDK) DeactivateWithContext(ctx context.Context) (*DeactivateResult, error) {
+	// Held for the whole call so a background renewal can neither be running
+	// nor start until the token is gone; one that runs afterwards finds the
+	// activation released and removes nothing but an empty cache.
+	s.renewMu.Lock()
+	defer s.renewMu.Unlock()
+
+	activationID, key, err := s.cachedCredentials()
+	if err != nil {
+		return nil, err
+	}
+	released, seatFreeAt, err := s.machines.Deactivate(ctx, activationID, key, s.machineID)
+	if err != nil {
+		return nil, mapNetworkError(err)
+	}
+	_ = s.store.SaveToken("", nil)
+	return &DeactivateResult{Released: released, SeatFreeAt: seatFreeAt}, nil
+}
+
+// Machines lists the machines holding a seat on this machine's licence. It
+// needs the network and an active activation on this machine.
+func (s *SDK) Machines() ([]Machine, error) {
+	return s.MachinesWithContext(context.Background())
+}
+
+// MachinesWithContext is the context-aware version of Machines.
+func (s *SDK) MachinesWithContext(ctx context.Context) ([]Machine, error) {
+	activationID, key, err := s.cachedCredentials()
+	if err != nil {
+		return nil, err
+	}
+	machines, err := s.machines.Machines(ctx, activationID, key, s.machineID)
+	if err != nil {
+		return nil, mapNetworkError(err)
+	}
+	return machines, nil
+}
+
+// RenameMachine names this machine and returns the name as stored, trimmed.
+// The server refuses a name that is empty, longer than 64 characters or holds
+// control characters.
+func (s *SDK) RenameMachine(name string) (string, error) {
+	return s.RenameMachineWithContext(context.Background(), name)
+}
+
+// RenameMachineWithContext is the context-aware version of RenameMachine.
+func (s *SDK) RenameMachineWithContext(ctx context.Context, name string) (string, error) {
+	activationID, key, err := s.cachedCredentials()
+	if err != nil {
+		return "", err
+	}
+	stored, err := s.machines.RenameMachine(ctx, activationID, key, s.machineID, name)
+	if err != nil {
+		return "", mapNetworkError(err)
+	}
+	return stored, nil
+}
+
+// cachedCredentials reads the activation id and licence key out of the
+// cached token. The token is not verified: the server authenticates these
+// calls itself, and a machine whose token has outlived its grace window or
+// its certificate chain still holds a seat it must be able to release.
+func (s *SDK) cachedCredentials() (activationID, key string, err error) {
+	raw, _, err := s.store.LoadToken()
+	if err != nil || raw == "" {
+		return "", "", ErrNotActivated
+	}
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
+		return "", "", ErrNotActivated
+	}
+	activationID, _ = claims["aid"].(string)
+	key, _ = claims["sub"].(string)
+	if activationID == "" || key == "" {
+		return "", "", ErrNotActivated
+	}
+	return activationID, key, nil
 }
 
 // validateLicenseKey is a minimal local sanity check, not a format check:

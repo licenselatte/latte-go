@@ -20,7 +20,7 @@ func TestClientSendsSDKInfo(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newClient(srv.URL, "pk_test_X")
+	c := newClient(srv.URL, "pk_test_X", "")
 	_, _, _ = c.Activate(context.Background(), "KEY", "machine")
 	_, _, _ = c.Renew(context.Background(), "act", "KEY", "machine")
 

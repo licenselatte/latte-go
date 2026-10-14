@@ -64,7 +64,10 @@ func resolveStoragePath(appKey string) (string, error) {
 }
 
 func mapNetworkError(err error) error {
+	var blocked *ports.DeactivationBlockedError
 	switch {
+	case errors.As(err, &blocked):
+		return &DeactivationBlockedError{Reason: blocked.Reason, AvailableAt: blocked.AvailableAt, Message: blocked.Message}
 	case errors.Is(err, ports.ErrLicenseInactiveOrExpired):
 		return ErrLicenseExpired
 	case errors.Is(err, ports.ErrSeatLimitReached):

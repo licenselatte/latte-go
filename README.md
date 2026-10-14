@@ -19,6 +19,8 @@ Embed license enforcement directly into your Go application in a few lines of co
   - [New](#new)
   - [Activate / ActivateWithContext](#activate--activatewithcontext)
   - [Check](#check)
+  - [Deactivate / DeactivateWithContext](#deactivate--deactivatewithcontext)
+  - [Machines and RenameMachine](#machines-and-renamemachine)
 - [The License struct](#the-license-struct)
 - [License types](#license-types)
 - [Offline grace period](#offline-grace-period)
@@ -115,6 +117,11 @@ type Config struct {
     // MachineID optionally replaces the OS machine ID as this install's
     // identity. Empty means the OS machine ID is used.
     MachineID string
+
+    // MachineName is the name sent on activation. Empty means the OS
+    // hostname; NoMachineName sends none at all.
+    MachineName   string
+    NoMachineName bool
 }
 ```
 
@@ -189,6 +196,48 @@ Validates the locally-stored token without making a network call. Use this for s
 
 Returns `ErrNotActivated` if `Activate` has never been called on this machine.
 Returns `ErrLicenseExpired` if the token's grace period has elapsed.
+
+### Deactivate / DeactivateWithContext
+
+```go
+func (s *SDK) Deactivate() (*DeactivateResult, error)
+func (s *SDK) DeactivateWithContext(ctx context.Context) (*DeactivateResult, error)
+
+type DeactivateResult struct {
+    Released   bool       // false when it was already released; still success
+    SeatFreeAt *time.Time // set when the seller's policy holds the seat until then
+}
+```
+
+Releases this machine's seat so the licence can be activated on another machine: the "Deactivate" button in your app. It needs the network. The SDK asks the server to release the seat first and deletes the cached token only once the server has answered, so `Check` returns `ErrNotActivated` afterwards until the next `Activate`. If the call fails, nothing changes locally and the user can try again; the seat is never lost to a dropped connection. Repeating a release that already went through is success.
+
+The activation id and licence key come from the cached token, so `Deactivate` returns `ErrNotActivated` when there is none. A machine that is lost, dead or wiped cannot call this; its seat is released from the seller's customer portal instead.
+
+On plans with the deactivation policy engine the seller may limit releases. A refusal is a `*DeactivationBlockedError` (matching `ErrDeactivationBlocked`) whose `Message` is written for the user and whose `AvailableAt` says when to try again. The seller may also hold the freed seat until this machine's last token has expired, which `SeatFreeAt` reports.
+
+```go
+res, err := sdk.Deactivate()
+var blocked *latte.DeactivationBlockedError
+switch {
+case errors.As(err, &blocked):
+    showMessage(blocked.Message)
+case err != nil:
+    showMessage("Could not reach the licence server. Nothing was changed; try again when online.")
+default:
+    showMessage("This machine is released.")
+}
+```
+
+### Machines and RenameMachine
+
+```go
+func (s *SDK) Machines() ([]Machine, error)
+func (s *SDK) RenameMachine(name string) (string, error)
+```
+
+`Machines` lists the machines holding a seat on this machine's licence: name, a 12-character fingerprint, when each was activated and last seen, `Current` for this machine, and `SeatFreeAt` for a released machine whose seat is still held. It is for showing the customer where their licence is in use; it cannot release another machine, which is the customer portal's job.
+
+`RenameMachine` names this machine and returns the name as stored. A machine is named after its hostname when it activates unless `Config.MachineName` or `NoMachineName` says otherwise, and a rename is kept on re-activation. Both calls need the network and an active activation on this machine (`ErrLicenseExpired` otherwise, from the server's `403`).
 
 ---
 
@@ -269,6 +318,7 @@ var (
     ErrSeatLimit       = errors.New("licenselatte: activation seat limit reached")
     ErrLicenseNotFound = errors.New("licenselatte: license not found")
     ErrInvalidProjectKey = errors.New("licenselatte: invalid project key")
+    ErrDeactivationBlocked = errors.New("licenselatte: deactivation blocked") // see DeactivationBlockedError
 )
 
 // SDK initialisation errors (returned by New)
