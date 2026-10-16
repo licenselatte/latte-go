@@ -466,7 +466,7 @@ The `AppID` prefix determines which API endpoint the SDK talks to:
 | Prefix | Endpoint | Purpose |
 |---|---|---|
 | `pk_live_` | `https://api.licenselatte.com` | Production |
-| `pk_test_` | `https://test.api.licenselatte.com` | Sandbox / CI |
+| `pk_test_` | `https://api.licenselatte.com` | Sandbox / CI |
 
 ---
 

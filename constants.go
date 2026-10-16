@@ -16,7 +16,6 @@ const (
 
 const (
 	publicURL = "https://api.licenselatte.com"
-	testURL   = "https://test.api.licenselatte.com"
 	localURL  = "http://localhost:8080"
 
 	// sdkVersion is reported to the API on every request, with sdkLanguage.

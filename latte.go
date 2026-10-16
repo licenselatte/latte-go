@@ -95,9 +95,7 @@ func New(config *Config) (*SDK, error) {
 
 	var apiURL string
 	switch env {
-	case envTest:
-		apiURL = testURL
-	case envLive:
+	case envLive, envTest:
 		apiURL = publicURL
 	case envLocal:
 		apiURL = localURL
