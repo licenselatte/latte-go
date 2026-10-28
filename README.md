@@ -95,8 +95,9 @@ func main() {
         log.Fatalf("check failed: %v", err)
     }
 
+    // Advisory only: the verdict of Check decides whether the app may run.
     if lic.InGracePeriod {
-        fmt.Println("warning: offline too long, please reconnect soon")
+        fmt.Println("Couldn't reach the licence server. Connect to the internet to keep using the app.")
     }
 
     // ... run your application
@@ -252,14 +253,26 @@ type License struct {
     ExpiresAt     time.Time         // end of the license (2099-01-01 for one that never ends)
     MachineIDHash string            // machine fingerprint 
     GracePeriod   time.Duration     // offline tolerance window from IssuedAt
-    InGracePeriod bool              // true → device has been offline a long time; reconnect soon
+    InGracePeriod bool              // true → a renewal could not reach the server; see below
     LicenseType   string            // "perpetual" | "expiring"
     Claims        map[string]any    // full JWT payload (includes custom metadata fields)
     Entitlements  map[string]any    // typed feature map: bool | int64 (see Entitlements)
 }
 ```
 
-`InGracePeriod` is `true` once the device has been offline longer than `maxRenewalTime` (60 minutes) but has not yet exhausted the full `GracePeriod`. Surface this to the user as a "please reconnect" warning.
+`InGracePeriod` is true when the licence is still valid on cached data, the SDK has tried to renew it and could not reach the server, and the offline grace window has not run out. In other words: `InGracePeriod = renewalFailed && 60 min < age < GracePeriod`, where `age` is the time since `IssuedAt` and `renewalFailed` is an in-memory flag the SDK sets when a background renewal cannot reach the server. The flag is never stored on disk, so `Check` stays fully offline and a freshly started process reports `false` until a renewal fails.
+
+| Situation | `Check` returns | `InGracePeriod` | Suggested host copy |
+|---|---|---|---|
+| Token under 60 minutes old | the licence | `false` | none |
+| Token older than 60 minutes, no renewal has failed | the licence | `false` | none: the SDK is renewing, or the app is online and has not renewed yet |
+| A renewal could not reach the server, token inside the grace window | the licence | `true` | "Couldn't reach the licence server. Connect to the internet to keep using the app." |
+| A renewal could not reach the server, grace window over | an error: the licence is rejected | n/a | "Reconnect to continue." |
+| A renewal was rejected as invalid or inactive | `ErrNotActivated` on the next `Check`, after the SDK clears its cache | `false` | "This licence was deactivated." Never "connect to the internet". |
+
+A server error (5xx or 429) is not a failure to reach the server: the licence is kept, the flag stays `false` and the renewal is retried in 5 minutes.
+
+The flag changes only when a renewal attempt ends, so call `Check` again after a renewal rather than relying on the value from startup. It is advisory: gate features on the verdict of `Check`, never on `InGracePeriod`.
 
 ---
 
@@ -303,7 +316,7 @@ The SDK accepts two token formats and tells them apart only by whether the token
 
 Both formats reach the same two rules above, so `ExpiresAt` and `GracePeriod` mean the same thing whichever one the server sent. The JWT library never rejects a token for its `exp`: the SDK checks it itself, so an ended license and a device offline too long are reported apart.
 
-The `InGracePeriod` field on `*License` lets you show a "please reconnect" banner before the deadline is reached.
+The `InGracePeriod` field on `*License` lets you show a "connect to the internet" nudge once a renewal has failed and before the deadline is reached. See [The License struct](#the-license-struct) for exactly when it is true.
 
 ---
 
@@ -365,7 +378,7 @@ When `Activate` or `Check` returns a valid cached token, the SDK fires a backgro
 
 A renewal is attempted when the cached token is at least 60 minutes old, and retried no more often than every 5 minutes. It never blocks or slows `Check`. A failed attempt is silently ignored: the existing token stays valid until its grace period elapses.
 
-A renewal the server rejects as invalid or inactive (for example because the licence was deactivated from the dashboard) clears the local cache, so the `Check` after it returns `ErrNotActivated`. A dashboard deactivation therefore takes effect at the next renewal attempt, not instantly.
+A renewal the server rejects as invalid or inactive (for example because the licence was deactivated from the dashboard) clears the local cache, so the `Check` after it returns `ErrNotActivated`. Deactivating a licence in the dashboard therefore takes effect at the next renewal attempt, not instantly: the rejected renewal clears the local cache, so the following `Check` returns `ErrNotActivated`.
 
 ---
 

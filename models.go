@@ -26,8 +26,11 @@ type License struct {
 	// GracePeriod is the offline tolerance window measured from IssuedAt.
 	GracePeriod time.Duration
 
-	// InGracePeriod is true when the token has expired but the grace window
-	// has not elapsed. The application should surface a "please reconnect" warning.
+	// InGracePeriod is true when the licence is still valid on cached data,
+	// the SDK has tried to renew it and could not reach the server, and the
+	// offline grace window has not run out. The application can surface a
+	// "connect to the internet" nudge. It is advisory: gate features on the
+	// verdict of Check, never on this field.
 	InGracePeriod bool
 
 	// LicenseType is "perpetual" or "expiring".
