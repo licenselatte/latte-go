@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,7 +49,25 @@ func (fs *FileStorage) writeFile(record *activationRecord) error {
 		return err
 	}
 
-	return os.WriteFile(fs.location, data, 0600)
+	// A temp file renamed over the cache keeps readers from seeing a partial
+	// write and concurrent writers from interleaving.
+	tmp, err := os.CreateTemp(filepath.Dir(fs.location), filepath.Base(fs.location)+".*.tmp")
+	if err != nil {
+		return err
+	}
+
+	_, err = tmp.Write(data)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), fs.location)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
+
+	return err
 }
 
 func (fs *FileStorage) SaveToken(token string, chain *domain.CertChain) error {
