@@ -19,7 +19,7 @@ const (
 	localURL  = "http://localhost:8080"
 
 	// sdkVersion is reported to the API on every request, with sdkLanguage.
-	sdkVersion  = "1.6.0"
+	sdkVersion  = "1.7.0"
 	sdkLanguage = "go"
 
 	// minRenewalTime is the minimum time before the SDK can execute a renew request agains the server
