@@ -207,6 +207,10 @@ func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License,
 // Returns ErrNotActivated if Activate has never been called on this machine.
 // Returns ErrLicenseExpired if the token is past its grace period.
 //
+// A token that is past its grace period but was genuinely issued for this
+// machine is renewed in the background; Check keeps returning an error until
+// the renewal has saved a new token, so re-check a few seconds later.
+//
 // Use this for periodic in-process checks (e.g. before allowing a gated feature).
 func (s *SDK) Check() (*License, error) {
 	raw, chain, err := s.store.LoadToken()
@@ -216,6 +220,7 @@ func (s *SDK) Check() (*License, error) {
 
 	lic, err := verify.VerifyActivationAnyAt(s.masterPubs, raw, chain, s.clock())
 	if err != nil {
+		s.renewLapsed(raw, chain)
 		if errors.Is(err, ports.ErrLicenseInactiveOrExpired) {
 			return nil, ErrLicenseExpired
 		}
@@ -223,6 +228,7 @@ func (s *SDK) Check() (*License, error) {
 	}
 	err = validate.ValidateAt(lic, s.machineID, s.clock())
 	if err != nil {
+		s.renewLapsed(raw, chain)
 		return nil, ErrNotActivated
 	}
 
@@ -235,6 +241,28 @@ func (s *SDK) Check() (*License, error) {
 	}
 
 	return s.toPublic(lic), nil
+}
+
+// renewLapsed starts a background renewal for a cached token that Check
+// rejects only because time has passed: its offline window or licence end is
+// over, or a cert in its chain has expired. The server accepts a renewal
+// whatever the token's age, so a machine that was off for longer than the
+// grace window recovers without a new activation. The signature chain and
+// machine id must still verify, since the activation id and key sent to the
+// server come from the token. Check's own result is not affected.
+func (s *SDK) renewLapsed(raw string, chain *domain.CertChain) {
+	lic, err := verify.VerifyActivationIgnoringExpiryAnyAt(s.masterPubs, raw, chain, s.clock())
+	if err != nil {
+		return
+	}
+	err = validate.ValidateAt(lic, s.machineID, s.clock())
+	if err != nil && !errors.Is(err, ports.ErrGracePeriodExpired) &&
+		!errors.Is(err, ports.ErrLicenseInactiveOrExpired) && !errors.Is(err, ports.ErrLicenseTooOld) {
+		return
+	}
+	if s.shouldTryRenew(lic) {
+		go s.silentRenew(lic)
+	}
 }
 
 // clock is the current time; tests pin it through now.
@@ -266,7 +294,7 @@ func (s *SDK) shouldTryRenew(lic *domain.License) bool {
 		return false
 	}
 
-	now := time.Now()
+	now := s.clock()
 	if now.Sub(s.lastRenewAttempt) < minRenewalTime {
 		return false
 	}

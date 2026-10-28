@@ -268,6 +268,7 @@ type License struct {
 | Token older than 60 minutes, no renewal has failed | the licence | `false` | none: the SDK is renewing, or the app is online and has not renewed yet |
 | A renewal could not reach the server, token inside the grace window | the licence | `true` | "Couldn't reach the licence server. Connect to the internet to keep using the app." |
 | A renewal could not reach the server, grace window over | an error: the licence is rejected | n/a | "Reconnect to continue." |
+| Computer was off longer than the grace window | `ErrNotActivated`, then the licence on a `Check` a few seconds later once the background renewal has saved a new token | `false` | "Checking your licence..." Re-check; do not send the user to activate again. |
 | A renewal was rejected as invalid or inactive | `ErrNotActivated` on the next `Check`, after the SDK clears its cache | `false` | "This licence was deactivated." Never "connect to the internet". |
 
 A server error (5xx or 429) is not a failure to reach the server: the licence is kept, the flag stays `false` and the renewal is retried in 5 minutes.
@@ -303,7 +304,9 @@ IssuedAt ───────────────────────�
 Two cases result in an expired token, checked in this order:
 
 1. **License ended**: `now > ExpiresAt`. The license itself is over; reconnecting does not help unless it is renewed or extended.
-2. **Offline too long**: `now > IssuedAt + GracePeriod`. The device has been offline longer than the grace window allows. The user must reconnect to receive a fresh token.
+2. **Offline too long**: `now > IssuedAt + GracePeriod`. The device has been offline longer than the grace window allows. It must reconnect to receive a fresh token.
+
+A computer that was off longer than the grace window recovers by itself. The first `Check` after launch reports not activated, but the SDK sees that the cached token was genuinely issued for this machine and renews it in the background. A `Check` a few seconds later, once the machine is online, returns the licence. Hosts should re-check rather than send the user to activate again. A token that does not verify, or that belongs to another machine, never triggers a renewal.
 
 ### Token claims
 
