@@ -270,7 +270,7 @@ type License struct {
 | `perpetual` | Never | Periodic (background) | Yes |
 | `expiring` | Set by policy | Periodic (background) | Yes |
 
-Both types use a rolling-renewal model. The SDK renews the cached token in the background every 5–60 minutes. The grace period gives the device a buffer to work offline if the renewal fails.
+Both types use a rolling-renewal model. The SDK renews the cached token in the background once it is at least 60 minutes old. The grace period gives the device a buffer to work offline if the renewal fails.
 
 The SDK validates and renews every token the same way whatever its `LicenseType`, so nothing else is required of your code: the field is informational.
 
@@ -363,7 +363,9 @@ Each project has its own file (keyed by the 32-char project key segment), so mul
 
 When `Activate` or `Check` returns a valid cached token, the SDK fires a background goroutine that calls `POST /v1/renew` and overwrites the stored token with the fresh one.
 
-Renewal happens between 5 and 60 minutes after the last issuance (randomised to spread server load). Renewal errors are silently ignored, the existing token remains valid until its grace period elapses.
+A renewal is attempted when the cached token is at least 60 minutes old, and retried no more often than every 5 minutes. It never blocks or slows `Check`. A failed attempt is silently ignored: the existing token stays valid until its grace period elapses.
+
+A renewal the server rejects as invalid or inactive (for example because the licence was deactivated from the dashboard) clears the local cache, so the `Check` after it returns `ErrNotActivated`. A dashboard deactivation therefore takes effect at the next renewal attempt, not instantly.
 
 ---
 

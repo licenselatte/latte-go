@@ -69,7 +69,8 @@ type SDK struct {
 	machines         ports.MachineManager
 	store            ports.Storage
 	machineID        string
-	renewMu          sync.Mutex
+	renewMu          sync.Mutex // serializes a renewal with Deactivate
+	stateMu          sync.Mutex // guards lastRenewAttempt and renewInFlight; never held across I/O
 	lastRenewAttempt time.Time
 	renewInFlight    bool
 	masterPubs       []ed25519.PublicKey
@@ -234,8 +235,8 @@ func (s *SDK) Check() (*License, error) {
 }
 
 func (s *SDK) shouldTryRenew(lic *domain.License) bool {
-	s.renewMu.Lock()
-	defer s.renewMu.Unlock()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 
 	if s.renewInFlight {
 		return false
@@ -257,10 +258,13 @@ func (s *SDK) shouldTryRenew(lic *domain.License) bool {
 // Errors are silently ignored — the existing cached token remains valid until
 // its grace period elapses.
 func (s *SDK) silentRenew(lic *domain.License) {
+	// renewInFlight is cleared under stateMu after renewMu is released.
 	s.renewMu.Lock()
 	defer func() {
 		s.renewMu.Unlock()
+		s.stateMu.Lock()
 		s.renewInFlight = false
+		s.stateMu.Unlock()
 	}()
 
 	if lic.ActivationID == "" || lic.Key == "" {
@@ -269,12 +273,6 @@ func (s *SDK) silentRenew(lic *domain.License) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	now := time.Now()
-
-	if now.Sub(s.lastRenewAttempt) < minRenewalTime {
-		return // rate limit
-	}
 
 	raw, chain, err := s.renewer.Renew(ctx, lic.ActivationID, lic.Key, s.machineID)
 	if err != nil {
