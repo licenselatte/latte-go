@@ -37,11 +37,26 @@ func VerifyActivationAt(masterPub ed25519.PublicKey, token string, chain *domain
 
 // VerifyActivationAnyAt is VerifyActivation with an injectable clock.
 func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *domain.CertChain, now time.Time) (*domain.License, error) {
+	return verifyActivation(masterPubs, token, chain, now, llcrypto.VerifyCert)
+}
+
+// VerifyActivationIgnoringExpiryAnyAt is VerifyActivationAnyAt that also
+// accepts a chain whose submaster or project cert has expired. The signatures
+// still have to verify up to a trusted root, so it proves the token was issued
+// by the server, which is all a renewal request needs. A caller must never
+// treat its result as a valid licence.
+func VerifyActivationIgnoringExpiryAnyAt(masterPubs []ed25519.PublicKey, token string, chain *domain.CertChain, now time.Time) (*domain.License, error) {
+	return verifyActivation(masterPubs, token, chain, now, llcrypto.VerifyCertIgnoringExpiry)
+}
+
+// verifyActivation checks the submaster and project certs with verifyCert.
+func verifyActivation(masterPubs []ed25519.PublicKey, token string, chain *domain.CertChain, now time.Time,
+	verifyCert func(ed25519.PublicKey, string, time.Time) (jwt.MapClaims, error)) (*domain.License, error) {
 	// Step 1: Verify submaster cert (signed by any trusted master).
 	var subClaims jwt.MapClaims
 	err := fmt.Errorf("no master keys")
 	for _, masterPub := range masterPubs {
-		if subClaims, err = llcrypto.VerifyCert(masterPub, chain.Submaster, now); err == nil {
+		if subClaims, err = verifyCert(masterPub, chain.Submaster, now); err == nil {
 			break
 		}
 	}
@@ -54,7 +69,7 @@ func VerifyActivationAnyAt(masterPubs []ed25519.PublicKey, token string, chain *
 	}
 
 	// Step 2: Verify project cert (signed by submaster).
-	projClaims, err := llcrypto.VerifyCert(submasterPub, chain.Project, now)
+	projClaims, err := verifyCert(submasterPub, chain.Project, now)
 	if err != nil {
 		return nil, fmt.Errorf("verify: project cert invalid: %w", err)
 	}

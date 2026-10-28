@@ -81,9 +81,11 @@ func mapNetworkError(err error) error {
 	}
 }
 
-func domainToPublic(d *domain.License) *License {
-	sinceActivation := time.Since(d.IssuedAt)
-	inGracePeriod := sinceActivation > maxRenewalTime && sinceActivation < d.GracePeriod
+// domainToPublic builds the licence handed to the host. renewFailed is whether
+// the last renewal attempt could not reach the server.
+func domainToPublic(d *domain.License, now time.Time, renewFailed bool) *License {
+	sinceActivation := now.Sub(d.IssuedAt)
+	inGracePeriod := renewFailed && sinceActivation > maxRenewalTime && sinceActivation < d.GracePeriod
 	publicMetadata := make(map[string]string)
 	if pmd, ok := d.Claims["pmd"]; ok {
 		if pmdMap, ok := pmd.(map[string]interface{}); ok {

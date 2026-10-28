@@ -69,10 +69,13 @@ type SDK struct {
 	machines         ports.MachineManager
 	store            ports.Storage
 	machineID        string
-	renewMu          sync.Mutex
+	renewMu          sync.Mutex // serializes a renewal with Deactivate
+	stateMu          sync.Mutex // guards lastRenewAttempt, renewInFlight and renewFailed; never held across I/O
 	lastRenewAttempt time.Time
 	renewInFlight    bool
+	renewFailed      bool // the last renewal could not reach the server; in memory only, guarded by stateMu
 	masterPubs       []ed25519.PublicKey
+	now              func() time.Time // nil means time.Now; tests pin it
 }
 
 // newClient returns the API client, identifying this SDK's language and
@@ -156,8 +159,8 @@ func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License,
 
 	// Fast path: valid cached token.
 	if raw, chain, err := s.store.LoadToken(); err == nil {
-		if lic, err := verify.VerifyActivation(s.masterPubs, raw, chain); err == nil {
-			if err := validate.Validate(lic, s.machineID); err == nil {
+		if lic, err := verify.VerifyActivationAnyAt(s.masterPubs, raw, chain, s.clock()); err == nil {
+			if err := validate.ValidateAt(lic, s.machineID, s.clock()); err == nil {
 				if s.shouldTryRenew(lic) {
 					// Renew in the background so it's fresh next time.
 					go s.silentRenew(lic)
@@ -172,7 +175,7 @@ func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License,
 				// alias claim) instead.
 				matches := lic.Key == key || (lic.Alias != "" && lic.Alias == normalized)
 				if matches && lic.IsValid() {
-					return domainToPublic(lic), nil
+					return s.toPublic(lic), nil
 				}
 			}
 		}
@@ -184,24 +187,29 @@ func (s *SDK) ActivateWithContext(ctx context.Context, rawKey string) (*License,
 		return nil, mapNetworkError(err)
 	}
 
-	lic, err := verify.VerifyActivation(s.masterPubs, raw, chain)
+	lic, err := verify.VerifyActivationAnyAt(s.masterPubs, raw, chain, s.clock())
 	if err != nil {
 		return nil, fmt.Errorf("licenselatte: server returned invalid token: %w", err)
 	}
 
-	err = validate.Validate(lic, s.machineID)
+	err = validate.ValidateAt(lic, s.machineID, s.clock())
 	if err != nil {
 		return nil, fmt.Errorf("licenselatte: server returned invalid token: %w", err)
 	}
 
 	_ = s.store.SaveToken(raw, chain)
+	s.setRenewFailed(false)
 
-	return domainToPublic(lic), nil
+	return s.toPublic(lic), nil
 }
 
 // Check validates the locally-stored token without making a network call.
 // Returns ErrNotActivated if Activate has never been called on this machine.
 // Returns ErrLicenseExpired if the token is past its grace period.
+//
+// A token that is past its grace period but was genuinely issued for this
+// machine is renewed in the background; Check keeps returning an error until
+// the renewal has saved a new token, so re-check a few seconds later.
 //
 // Use this for periodic in-process checks (e.g. before allowing a gated feature).
 func (s *SDK) Check() (*License, error) {
@@ -210,15 +218,17 @@ func (s *SDK) Check() (*License, error) {
 		return nil, ErrNotActivated
 	}
 
-	lic, err := verify.VerifyActivation(s.masterPubs, raw, chain)
+	lic, err := verify.VerifyActivationAnyAt(s.masterPubs, raw, chain, s.clock())
 	if err != nil {
+		s.renewLapsed(raw, chain)
 		if errors.Is(err, ports.ErrLicenseInactiveOrExpired) {
 			return nil, ErrLicenseExpired
 		}
 		return nil, ErrNotActivated
 	}
-	err = validate.Validate(lic, s.machineID)
+	err = validate.ValidateAt(lic, s.machineID, s.clock())
 	if err != nil {
+		s.renewLapsed(raw, chain)
 		return nil, ErrNotActivated
 	}
 
@@ -230,18 +240,61 @@ func (s *SDK) Check() (*License, error) {
 		return nil, ErrNotActivated
 	}
 
-	return domainToPublic(lic), nil
+	return s.toPublic(lic), nil
+}
+
+// renewLapsed starts a background renewal for a cached token that Check
+// rejects only because time has passed: its offline window or licence end is
+// over, or a cert in its chain has expired. The server accepts a renewal
+// whatever the token's age, so a machine that was off for longer than the
+// grace window recovers without a new activation. The signature chain and
+// machine id must still verify, since the activation id and key sent to the
+// server come from the token. Check's own result is not affected.
+func (s *SDK) renewLapsed(raw string, chain *domain.CertChain) {
+	lic, err := verify.VerifyActivationIgnoringExpiryAnyAt(s.masterPubs, raw, chain, s.clock())
+	if err != nil {
+		return
+	}
+	err = validate.ValidateAt(lic, s.machineID, s.clock())
+	if err != nil && !errors.Is(err, ports.ErrGracePeriodExpired) &&
+		!errors.Is(err, ports.ErrLicenseInactiveOrExpired) && !errors.Is(err, ports.ErrLicenseTooOld) {
+		return
+	}
+	if s.shouldTryRenew(lic) {
+		go s.silentRenew(lic)
+	}
+}
+
+// clock is the current time; tests pin it through now.
+func (s *SDK) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+func (s *SDK) setRenewFailed(v bool) {
+	s.stateMu.Lock()
+	s.renewFailed = v
+	s.stateMu.Unlock()
+}
+
+func (s *SDK) toPublic(lic *domain.License) *License {
+	s.stateMu.Lock()
+	failed := s.renewFailed
+	s.stateMu.Unlock()
+	return domainToPublic(lic, s.clock(), failed)
 }
 
 func (s *SDK) shouldTryRenew(lic *domain.License) bool {
-	s.renewMu.Lock()
-	defer s.renewMu.Unlock()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 
 	if s.renewInFlight {
 		return false
 	}
 
-	now := time.Now()
+	now := s.clock()
 	if now.Sub(s.lastRenewAttempt) < minRenewalTime {
 		return false
 	}
@@ -257,10 +310,13 @@ func (s *SDK) shouldTryRenew(lic *domain.License) bool {
 // Errors are silently ignored — the existing cached token remains valid until
 // its grace period elapses.
 func (s *SDK) silentRenew(lic *domain.License) {
+	// renewInFlight is cleared under stateMu after renewMu is released.
 	s.renewMu.Lock()
 	defer func() {
 		s.renewMu.Unlock()
+		s.stateMu.Lock()
 		s.renewInFlight = false
+		s.stateMu.Unlock()
 	}()
 
 	if lic.ActivationID == "" || lic.Key == "" {
@@ -270,34 +326,38 @@ func (s *SDK) silentRenew(lic *domain.License) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	now := time.Now()
-
-	if now.Sub(s.lastRenewAttempt) < minRenewalTime {
-		return // rate limit
-	}
-
 	raw, chain, err := s.renewer.Renew(ctx, lic.ActivationID, lic.Key, s.machineID)
+	// A renewal that outlived its activation reports nothing: the flag
+	// belongs to whatever activation the SDK holds now.
+	if !s.holdsActivation(lic.ActivationID) {
+		return
+	}
 	if err != nil {
 		var licenseError *ports.InvalidLicenseError
 		// Check if errors is of type invalid license error
-		if errors.As(err, &licenseError) && s.holdsActivation(lic.ActivationID) {
+		if errors.As(err, &licenseError) {
 			// If invalid, delete it from the store
 			_ = s.store.SaveToken("", nil)
 		}
+		// Only a failure to reach the server counts: any other answer, a
+		// rejection or a server error, means the server was reached.
+		s.setRenewFailed(errors.Is(err, ports.ErrNetworkError))
 		return
 	}
 
-	if _, err := verify.VerifyActivation(s.masterPubs, raw, chain); err != nil {
+	// Whatever happens to the new token, the server answered.
+	s.setRenewFailed(false)
+
+	renewed, err := verify.VerifyActivationAnyAt(s.masterPubs, raw, chain, s.clock())
+	if err != nil {
 		return
 	}
 
-	if err := validate.Validate(lic, s.machineID); err != nil {
+	if err := validate.ValidateAt(renewed, s.machineID, s.clock()); err != nil {
 		return
 	}
 
-	if s.holdsActivation(lic.ActivationID) {
-		_ = s.store.SaveToken(raw, chain)
-	}
+	_ = s.store.SaveToken(raw, chain)
 }
 
 // holdsActivation reports whether the cached token still belongs to
@@ -340,6 +400,7 @@ func (s *SDK) DeactivateWithContext(ctx context.Context) (*DeactivateResult, err
 		return nil, mapNetworkError(err)
 	}
 	_ = s.store.SaveToken("", nil)
+	s.setRenewFailed(false)
 	return &DeactivateResult{Released: released, SeatFreeAt: seatFreeAt}, nil
 }
 

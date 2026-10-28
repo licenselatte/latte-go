@@ -37,6 +37,8 @@ type fixture struct {
 		Daily     string `json:"daily"`
 	} `json:"chain"`
 
+	RenewalFailed bool `json:"renewal_failed"`
+
 	Expect        string `json:"expect"`
 	ExpectStage   string `json:"expect_stage"`
 	ExpectReason  string `json:"expect_reason"`
@@ -131,16 +133,14 @@ func TestFixtures(t *testing.T) {
 				t.Fatalf("expected rejection (stage=%s reason=%s) but both verify and validate succeeded", f.ExpectStage, f.ExpectReason)
 			}
 
-			sinceActivation := f.Now.Sub(lic.IssuedAt)
-			inGrace := sinceActivation > maxRenewalTime && sinceActivation < lic.GracePeriod
-			if inGrace != f.ExpectInGrace {
-				t.Fatalf("InGracePeriod mismatch: got %v, want %v", inGrace, f.ExpectInGrace)
-			}
-
 			// Through domainToPublic rather than decodeEntitlements directly,
-			// so the assertion covers the wiring an application actually gets
+			// so the assertions cover the wiring an application actually gets
 			// back from Activate and Check, not just the decoder.
-			assertEntitlements(t, domainToPublic(lic), f)
+			pub := domainToPublic(lic, f.Now, f.RenewalFailed)
+			if pub.InGracePeriod != f.ExpectInGrace {
+				t.Fatalf("InGracePeriod mismatch: got %v, want %v (renewal_failed=%v)", pub.InGracePeriod, f.ExpectInGrace, f.RenewalFailed)
+			}
+			assertEntitlements(t, pub, f)
 		})
 	}
 }
