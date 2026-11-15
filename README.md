@@ -21,6 +21,7 @@ Embed license enforcement directly into your Go application in a few lines of co
   - [Check](#check)
   - [Deactivate / DeactivateWithContext](#deactivate--deactivatewithcontext)
   - [Machines and RenameMachine](#machines-and-renamemachine)
+  - [Offline activation by file](#offline-activation-by-file)
 - [The License struct](#the-license-struct)
 - [License types](#license-types)
 - [Offline grace period](#offline-grace-period)
@@ -240,6 +241,39 @@ func (s *SDK) RenameMachine(name string) (string, error)
 
 `RenameMachine` names this machine and returns the name as stored. A machine is named after its hostname when it activates unless `Config.MachineName` or `NoMachineName` says otherwise, and a rename is kept on re-activation. Both calls need the network and an active activation on this machine (`ErrLicenseExpired` otherwise, from the server's `403`).
 
+### Offline activation by file
+
+```go
+func (s *SDK) OfflineActivationRequest(licenseKey string) ([]byte, error)
+func (s *SDK) ImportOfflineActivation(response []byte) (*License, error)
+```
+
+For machines that can never reach the internet. Neither call touches the network.
+
+1. `OfflineActivationRequest` returns a request file for this machine. Save it and have the customer carry it to any online computer.
+2. There they upload it at `https://portal.licenselatte.com/<first six characters of the key>/offline` and download a response file. You can also exchange it yourself with `POST https://api.licenselatte.com/v1/activation/offline`, sending the file as the body.
+3. `ImportOfflineActivation` verifies the response against LicenseLatte's root keys, checks it was issued for this machine, and caches it. From then on `Activate` and `Check` work exactly as after an online activation.
+
+```go
+req, err := sdk.OfflineActivationRequest(key)
+if err != nil { /* ErrInvalidKey */ }
+_ = os.WriteFile("activation-request.json", req, 0o600)
+
+// ...later, with the file the customer brought back:
+resp, _ := os.ReadFile("activation-response.json")
+lic, err := sdk.ImportOfflineActivation(resp)
+switch {
+case errors.Is(err, latte.ErrInvalidOfflineResponse):
+    // not a response file, tampered with, or made for another machine
+case errors.Is(err, latte.ErrStaleOfflineResponse):
+    // an older response than the licence already on this machine
+case errors.Is(err, latte.ErrLicenseExpired):
+    // the response's offline window has already passed
+}
+```
+
+The request file holds the licence key, so treat it like the key. It is accepted for 30 days. The licence then works offline for the policy's grace period (at most 90 days); to extend it, repeat the exchange before it runs out. A repeat from the same machine reuses its seat. The seller's plan must include offline activation and the policy must have an offline window. To release an offline machine, the customer releases it in the portal; the format and its limits are described in the [offline activation spec](https://licenselatte.com/docs/offline-activation).
+
 ---
 
 ## The License struct
@@ -335,6 +369,8 @@ var (
     ErrLicenseNotFound = errors.New("licenselatte: license not found")
     ErrInvalidProjectKey = errors.New("licenselatte: invalid project key")
     ErrDeactivationBlocked = errors.New("licenselatte: deactivation blocked") // see DeactivationBlockedError
+    ErrInvalidOfflineResponse = errors.New("licenselatte: invalid offline activation response")
+    ErrStaleOfflineResponse   = errors.New("licenselatte: offline activation response is older than the current licence")
 )
 
 // SDK initialisation errors (returned by New)

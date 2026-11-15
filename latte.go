@@ -69,6 +69,7 @@ type SDK struct {
 	machines         ports.MachineManager
 	store            ports.Storage
 	machineID        string
+	machineName      string     // sent on activation; empty sends none
 	renewMu          sync.Mutex // serializes a renewal with Deactivate
 	stateMu          sync.Mutex // guards lastRenewAttempt, renewInFlight and renewFailed; never held across I/O
 	lastRenewAttempt time.Time
@@ -128,14 +129,15 @@ func New(config *Config) (*SDK, error) {
 	machineID := protectMachineID(rawMachineID, config.AppID)
 
 	return &SDK{
-		appID:      config.AppID,
-		appKey:     appKey,
-		activator:  client,
-		renewer:    client,
-		machines:   client,
-		store:      storage.NewFileStorage(storePath),
-		machineID:  machineID,
-		masterPubs: masterPublicKeys(),
+		appID:       config.AppID,
+		appKey:      appKey,
+		activator:   client,
+		renewer:     client,
+		machines:    client,
+		store:       storage.NewFileStorage(storePath),
+		machineID:   machineID,
+		machineName: machineName,
+		masterPubs:  masterPublicKeys(),
 	}, nil
 }
 
