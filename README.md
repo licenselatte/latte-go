@@ -29,6 +29,7 @@ Embed license enforcement directly into your Go application in a few lines of co
 - [Background renewal](#background-renewal)
 - [Custom metadata](#custom-metadata)
 - [Entitlements](#entitlements)
+- [Admin client (server-side)](#admin-client-server-side)
 - [Environments](#environments)
 - [Testing](#testing)
 
@@ -474,6 +475,39 @@ Entitlements are a distribution mechanism for a signed answer, not a
 tamper-proofing one — a determined user can patch this check out of your
 binary as easily as any other. If real revenue depends on a feature,
 re-validate it server-side.
+
+---
+
+## Admin client (server-side)
+
+> **Warning:** the `admin` package authenticates with an API key (`llk_live_...` or `llk_test_...`). An API key is a secret. Use it only in code you run yourself, such as a storefront webhook or a support tool, and never embed it in an application you ship to end users. Client apps use the `latte` package above, which needs no secret.
+
+```go
+import "github.com/licenselatte/latte-go/admin"
+
+client, err := admin.New(os.Getenv("LICENSELATTE_API_KEY"))
+if err != nil {
+    log.Fatal(err)
+}
+
+ctx := context.Background()
+lic, err := client.IssueLicense(ctx, admin.IssueLicenseParams{
+    PolicyID:      "b6f1...", // from client.ListPolicies
+    CustomerEmail: "buyer@example.com",
+    Metadata:      map[string]any{"order_id": "ord_123"},
+})
+
+var apiErr *admin.Error
+if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+    // a plan or test-project limit refused the issuance
+}
+
+_, err = client.SuspendLicense(ctx, lic.LicenseKey)
+```
+
+Methods: `IssueLicense`, `ListLicenses`, `GetLicense`, `UpdateLicense`, `RevokeLicense`, `SuspendLicense`, `ReinstateLicense`, `ListActivations`, `ReleaseActivation`, `ResendLicenseEmail`, `ListPolicies`. Every call takes a `context.Context`.
+
+Options for `admin.New`: `WithBaseURL`, `WithHTTPClient`, `WithTimeout` (default 30 seconds). A non-2xx answer is an `*admin.Error` with `StatusCode`, `Message` and, when the API sends one, `Code`. Writes are never retried. The `Raw` field on `License`, `Policy` and `Activation` holds the full JSON object, so fields added by the API later stay readable. `UpdateLicenseParams` replaces `Metadata` and `ClientMetadata` wholesale when set, and `ClearExpiresAt` removes the expiry.
 
 ---
 
